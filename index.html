@@ -37,7 +37,7 @@ const excludedVirtual=/\b(?:esports?|e[- ]?soccer|e[- ]?football|e[- ]?basketbal
 const allowedMarket=h=>h.sport!=='Esports'&&!excludedVirtual.test([h.title,h.event,h.league,h.event_slug].join(' '));
 const blockedGameLeagues=new Set(['val','cs','cs2','cod','lol','dota','rl','ow','r6','sc2','pubg','fn','efootball','esoccer','ebasketball']);
 const allowedGame=g=>!blockedGameLeagues.has(String(g.leagueAbbreviation||'').toLowerCase())&&!excludedVirtual.test([g.leagueAbbreviation,g.league,g.sport,g.homeTeam,g.awayTeam,g.slug].join(' '));
-const liveGames=new Map();let sportsSocket=null,liveConnected=false;
+const liveGames=new Map();let sportsSocket=null,liveConnected=false,liveError='';
 const LIVE_TTL=120000;let liveLastMessage=0;
 function drawLive(){
  const now=Date.now(),games=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
@@ -55,19 +55,20 @@ function drawLive(){
   }
  }
  alerts.sort((a,b)=>b.rank-a.rank);
- $('liveCount').textContent=alerts.length+' alerts · '+games.length+' live games · '+(liveConnected?(liveLastMessage?'feed receiving':'connected, awaiting data'):'feed disconnected');
+ $('liveCount').textContent=alerts.length+' alerts · '+games.length+' live games · '+(liveConnected?(liveLastMessage?'feed receiving':'connected, awaiting data'):'feed disconnected'+(liveError?' ('+liveError+')':''));
  $('liveGames').innerHTML=alerts.length?alerts.slice(0,40).map(({g,h,peakDrop,shortDrop,reversal})=>'<article class="card"><div class="event">'+esc((g.awayTeam||'')+' vs '+(g.homeTeam||''))+'</div><div class="league">'+esc(g.leagueAbbreviation||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta"><span class="up">Confirmed live status</span><span class="down">'+(reversal?'99% REVERSAL':'MAJOR DROP')+'</span></div><div class="history"><span>'+esc(h.title||'Market')+' · '+esc(h.outcome||'')+'</span><strong>'+pct(h.probability)+'</strong></div><div class="meta"><span>Peak '+pct(h.peak)+'</span><span class="down">From peak −'+peakDrop.toFixed(1)+' pp</span><span>Since prior snapshot '+(Number.isFinite(shortDrop)?'−'+shortDrop.toFixed(1)+' pp':'unknown')+'</span><span>Price observed '+date(h.last_seen)+'</span></div></article>').join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?'No qualifying live reversals right now. Only confirmed live games with exact market matches and qualifying drops are shown.':'Connected to sports feed; waiting for game data. No live opportunities verified yet.'):'Live feed disconnected; no alerts can be verified.')+'</div>';
 }
 function connectSports(){
  if(sportsSocket&&sportsSocket.readyState<=1)return;
  const ws=new WebSocket('wss://sports-api.polymarket.com/ws');sportsSocket=ws;
- ws.onopen=()=>{liveConnected=true;drawLive()};
+ ws.onopen=()=>{liveConnected=true;liveError='';drawLive()};
  ws.onmessage=e=>{liveLastMessage=Date.now();if(e.data==='ping'){ws.send('pong');return}try{const g=JSON.parse(e.data);if(!g||typeof g!=='object'||!g.gameId||!allowedGame(g))return;g.received=Date.now();liveGames.set(String(g.gameId),g);if(liveGames.size>1000){for(const [k,v] of liveGames)if(Date.now()-v.received>LIVE_TTL)liveGames.delete(k)}drawLive()}catch(_){}};
- ws.onclose=()=>{liveConnected=false;liveGames.clear();drawLive();setTimeout(connectSports,5000)};
- ws.onerror=()=>{ws.close()};
+ ws.onclose=e=>{liveConnected=false;liveError='socket closed '+(e.code||'');liveGames.clear();drawLive();setTimeout(connectSports,5000)};
+ ws.onerror=()=>{liveError='connection error';drawLive();ws.close()};
 }
 setInterval(drawLive,15000);
-setTimeout(()=>{if(!liveConnected&&sportsSocket&&sportsSocket.readyState===0){sportsSocket.close();drawLive()}},12000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(!sportsSocket||sportsSocket.readyState>1))connectSports()});
+setInterval(()=>{if(!document.hidden&&(!sportsSocket||sportsSocket.readyState>1))connectSports()},20000);
 connectSports();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
