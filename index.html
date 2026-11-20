@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#09111f"><title>Sports Market Scanner</title>
+<meta name="theme-color" content="#09111f"><title>Polymarket Market Scanner</title>
 <style>
 :root{color-scheme:dark;--bg:#09111f;--panel:#111d30;--panel2:#15243a;--line:#26364d;--muted:#91a3bb;--text:#edf4ff;--green:#32d69a;--red:#ff7185;--blue:#76aaff}
 *{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0c1728 0,#09111f 340px);color:var(--text);font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -11,12 +11,12 @@ main{max-width:1100px;margin:auto;padding:0 14px 40px}.toolbar{display:flex;gap:
 @media(min-width:700px){.cards{grid-template-columns:1fr 1fr}.stats{grid-template-columns:repeat(4,1fr)}h1{font-size:30px}.filters{grid-template-columns:1fr 160px 140px}}
 </style></head>
 <body>
-<header><div class="brand">MARKET INTELLIGENCE / 01</div><div class="head"><h1>Sports Market Scanner</h1><span class="pill">READ ONLY</span></div><div class="sub">Polymarket market probabilities · live snapshot + background history</div></header>
+<header><div class="brand">MARKET INTELLIGENCE / 01</div><div class="head"><h1>Polymarket Market Scanner</h1><span class="pill">READ ONLY</span></div><div class="sub">Polymarket market probabilities · five-minute background snapshots</div></header>
 <main>
 <div class="toolbar"><button class="primary" id="refresh">↻ Refresh markets</button><button id="export">Export history CSV</button><span class="status" id="status">Waiting to load…</span></div>
 <div class="notice" id="freshness" role="status">Checking background collection status…</div>
 <div class="stats">
-<div class="stat"><small>Sports markets</small><strong id="count">—</strong></div>
+<div class="stat"><small>Market outcomes</small><strong id="count">—</strong></div>
 <div class="stat"><small>Highest probability</small><strong id="highest">—</strong></div>
 <div class="stat"><small>Crossed 99%</small><strong id="n99">—</strong></div>
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
@@ -27,8 +27,8 @@ main{max-width:1100px;margin:auto;padding:0 14px 40px}.toolbar{display:flex;gap:
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
 <div class="sectionhead"><h2>Markets & probability movement</h2><span class="muted" id="updated">—</span></div>
 <div class="filters"><input id="search" placeholder="Search team, event, market…"><select id="threshold"><option value="0">All probabilities</option><option value="90">90% and higher</option><option value="95">95% and higher</option><option value="98">98% and higher</option><option value="99">99% and higher</option><option value="drop">Biggest drops</option></select><select id="sort"><option value="volume">Volume</option><option value="prob">Probability</option><option value="peak">Highest peak</option><option value="change">Biggest move</option></select></div>
-<div id="cards" class="cards"><div class="empty">Loading Polymarket sports events…</div></div>
-<div class="notice"><b>Data notes:</b> Probabilities are market prices, not guaranteed real-world chances. This first build reads public Polymarket international Gamma data; it is not a sportsbook odds feed and does not place bets. Background history is collected by a scheduled GitHub Actions workflow (runs may be delayed or skipped); browser snapshots are stored locally and can be lost if browser data is cleared.</div>
+<div id="cards" class="cards"><div class="empty">Loading all-category Polymarket market observations…</div></div>
+<div class="notice"><b>Data notes:</b> Probabilities are market prices, not guaranteed real-world chances. This build reads public Polymarket Gamma data; it is not a sportsbook odds feed and does not place bets. Background history is collected by a scheduled GitHub Actions workflow (runs may be delayed or skipped); browser snapshots are stored locally and can be lost if browser data is cleared.</div>
 </main>
 <script>
 const API='https://gamma-api.polymarket.com';
@@ -42,6 +42,7 @@ async function loadServerHistory(){
     if(!d||typeof d.markets!=='object'||!d.generated_at)throw Error('History is missing or uninitialized');
     serverHistory=d.markets;
     serverUpdated=Number(d.last_success_at||d.generated_at)*1000;
+    useBackgroundMarkets();
     serverStatus='ok';
   }catch(e){serverStatus='error';serverUpdated=null;setStatus('Background history unavailable: '+e.message,'error')}
   updateFreshness();
@@ -59,6 +60,16 @@ function updateFreshness(){
   el.textContent='Background history: '+label+' · last saved '+new Date(serverUpdated).toLocaleString()+' · '+minutes+' min ago. Scheduled checks are best effort, not live odds.';
 }
 
+function useBackgroundMarkets(){
+ const latest=Number(serverUpdated||0)/1000 || Math.max(0,...Object.values(serverHistory).slice(0,500).map(h=>Number(h.last_seen)||0));
+ markets=Object.values(serverHistory).filter(h=>Number(h.last_seen)>=latest-900&&Number.isFinite(Number(h.probability))).map(h=>({
+ id:h.id,title:h.title||'Polymarket market',event:h.event||'',league:h.league||'Polymarket',
+ outcome:h.outcome||'Outcome',p:Number(h.probability),volume:num(h.volume),last_seen:Number(h.last_seen)
+ }));
+ document.getElementById('updated').textContent='Saved '+new Date((serverUpdated||Date.now())).toLocaleTimeString();
+ setStatus('Background market feed · '+markets.length+' recently observed outcomes');
+ render();
+}
 function loadHistory(){try{return JSON.parse(localStorage.getItem(KEY)||'{}')}catch{return {}}}
 function saveHistory(){try{localStorage.setItem(KEY,JSON.stringify(history))}catch(e){setStatus('Browser storage unavailable','error')}}
 function setStatus(s,cls=''){const el=document.getElementById('status');el.textContent=s;el.className='status '+cls}
@@ -91,10 +102,10 @@ function renderReversals(){
 }
 function pct(n){return (n*100).toFixed(1)+'%'}
 function fmtVol(v){if(v==null)return '—';return '$'+Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(v)}
-function render(){const q=document.getElementById('search').value.toLowerCase(),th=document.getElementById('threshold').value,sort=document.getElementById('sort').value;let list=markets.filter(m=>{const z=metrics(m);const match=(m.title+' '+m.event+' '+m.league+' '+m.outcome).toLowerCase().includes(q);return match&&(th==='drop'?z.fromPeak<-.02:th==='0'||m.p*100>=Number(th))});list.sort((a,b)=>{const x=metrics(a),y=metrics(b);return sort==='prob'?b.p-a.p:sort==='peak'?y.peak-x.peak:sort==='change'?Math.abs(y.fromPeak)-Math.abs(x.fromPeak):(b.volume||0)-(a.volume||0)});document.getElementById('count').textContent=markets.length;document.getElementById('highest').textContent=markets.length?pct(Math.max(...markets.map(x=>x.p))):'—';document.getElementById('n99').textContent=markets.filter(x=>metrics(x).ever99).length;document.getElementById('observations').textContent=Object.values(serverHistory).reduce((n,h)=>n+(h.points||[]).length,0)+Object.values(history).reduce((n,h)=>n+(h.points||[]).length,0);const root=document.getElementById('cards');if(!list.length){root.innerHTML='<div class="empty">No matching markets in the current feed.</div>';return}root.innerHTML=list.slice(0,120).map(m=>{const z=metrics(m),delta=z.fromPeak;return '<article class="card"><div class="topline"><div><div class="event">'+esc(m.title)+'</div><div class="league">'+esc(m.event||m.league)+'</div></div><div class="prob">'+pct(m.p)+'</div></div><div class="meta"><span>Peak <b>'+pct(z.peak)+'</b></span><span>From peak <b class="'+(delta<-.001?'down':'up')+'">'+(delta>0?'+':'')+(delta*100).toFixed(1)+' pp</b></span><span>Volume '+fmtVol(m.volume)+'</span></div><div class="history"><span>'+(z.ever99?'✓ Reached 99%+':'History tracking')+' · '+z.points+' saved points</span><span>'+esc(m.outcome)+'</span></div></article>'}).join('')}
+function render(){const q=document.getElementById('search').value.toLowerCase(),th=document.getElementById('threshold').value,sort=document.getElementById('sort').value;let list=markets.filter(m=>{const z=metrics(m);const match=(m.title+' '+m.event+' '+m.league+' '+m.outcome).toLowerCase().includes(q);return match&&(th==='drop'?z.fromPeak<-.02:th==='0'||m.p*100>=Number(th))});list.sort((a,b)=>{const x=metrics(a),y=metrics(b);return sort==='prob'?b.p-a.p:sort==='peak'?y.peak-x.peak:sort==='change'?Math.abs(y.fromPeak)-Math.abs(x.fromPeak):(b.volume||0)-(a.volume||0)});document.getElementById('count').textContent=markets.length;document.getElementById('highest').textContent=markets.length?pct(markets.reduce((v,x)=>Math.max(v,x.p),0)):'—';document.getElementById('n99').textContent=markets.filter(x=>metrics(x).ever99).length;document.getElementById('observations').textContent=Object.values(serverHistory).reduce((n,h)=>n+(h.points||[]).length,0)+Object.values(history).reduce((n,h)=>n+(h.points||[]).length,0);const root=document.getElementById('cards');if(!list.length){root.innerHTML='<div class="empty">No matching markets in the current feed.</div>';return}root.innerHTML=list.slice(0,120).map(m=>{const z=metrics(m),delta=z.fromPeak;return '<article class="card"><div class="topline"><div><div class="event">'+esc(m.title)+'</div><div class="league">'+esc(m.event||m.league)+'</div></div><div class="prob">'+pct(m.p)+'</div></div><div class="meta"><span>Peak <b>'+pct(z.peak)+'</b></span><span>From peak <b class="'+(delta<-.001?'down':'up')+'">'+(delta>0?'+':'')+(delta*100).toFixed(1)+' pp</b></span><span>Volume '+fmtVol(m.volume)+'</span></div><div class="history"><span>'+(z.ever99?'✓ Reached 99%+':'History tracking')+' · '+z.points+' saved points</span><span>'+esc(m.outcome)+'</span></div></article>'}).join('')}
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function refresh(){const b=document.getElementById('refresh');b.disabled=true;setStatus('Fetching public sports market data…');try{const events=await fetchEvents();const found=events.filter(isSports);markets=found.flatMap(normalize);record(markets);lastLoaded=new Date();document.getElementById('updated').textContent='Updated '+lastLoaded.toLocaleTimeString();setStatus('Current feed connected · '+events.length+' events scanned');updateFreshness();render()}catch(e){setStatus(e.message+' · Try again later','error');document.getElementById('cards').innerHTML='<div class="empty">Could not load the public feed. Check your connection and try Refresh.</div>'}finally{b.disabled=false}}
+async function refresh(){await loadServerHistory();return;const b=document.getElementById('refresh');b.disabled=true;setStatus('Fetching public market data…');try{const events=await fetchEvents();const found=events.filter(isSports);markets=found.flatMap(normalize);record(markets);lastLoaded=new Date();document.getElementById('updated').textContent='Updated '+lastLoaded.toLocaleTimeString();setStatus('Current feed connected · '+events.length+' events scanned');updateFreshness();render()}catch(e){setStatus(e.message+' · Try again later','error');document.getElementById('cards').innerHTML='<div class="empty">Could not load the public feed. Check your connection and try Refresh.</div>'}finally{b.disabled=false}}
 document.getElementById('refresh').addEventListener('click',refresh);['reversalSearch','reversalSort','reversalStatus'].forEach(id=>document.getElementById(id).addEventListener('input',renderReversals));['search','threshold','sort'].forEach(id=>document.getElementById(id).addEventListener('input',render));
 document.getElementById('export').addEventListener('click',()=>{const rows=[['market_id','title','event','observed_at','probability']];Object.entries(serverHistory).forEach(([id,h])=>(h.points||[]).forEach(p=>rows.push([id,h.title,h.event,new Date(p.t*1000).toISOString(),p.p])));Object.entries(history).forEach(([id,h])=>(h.points||[]).forEach(p=>rows.push([id,h.title,h.event,new Date(p.t).toISOString(),p.p])));const csv=rows.map(r=>r.map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='sports-probability-history.csv';a.click();URL.revokeObjectURL(a.href)});
-loadServerHistory().finally(refresh);
+loadServerHistory();
 </script></body></html>
