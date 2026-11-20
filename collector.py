@@ -20,6 +20,7 @@ SPORTS = re.compile(
     r"\b(?:sports|nba|wnba|nfl|mlb|nhl|ncaa|ncaab|ncaaf|soccer|football|tennis|table.?tennis|golf|ufc|mma|boxing|cricket|rugby|formula.?1|f1|esports|basketball|baseball|hockey|valorant|counter.?strike|dota|badminton|volleyball)\b",
     re.I,
 )
+EXCLUDED_VIRTUAL = re.compile(r"(?i)(?:\b(?:esports?|e[- ]?soccer|e[- ]?football|e[- ]?basketball|e[- ]?tennis|e[- ]?hockey|e[- ]?baseball|e[- ]?sports|virtual|simulation|simulated|counter[- ]?strike|cs2|csgo|call of duty|warzone|valorant|dota\s*2?|league of legends|rocket league|overwatch|fortnite|pubg|rainbow six|starcraft|fifa esports|ea sports fc|nba\s*2k)\b)")
 THRESHOLDS = (90, 95, 98, 99)
 MAX_POINTS = 300
 MAX_EVENTS = 20000
@@ -40,10 +41,16 @@ def as_list(value):
         return []
 
 
+def is_excluded(event):
+    tags = " ".join(str(t.get(k) or "") for t in (event.get("tags") or []) if isinstance(t, dict) for k in ("slug", "label", "name"))
+    fields = " ".join(str(event.get(k) or "") for k in ("title", "name", "slug", "description"))
+    return bool(EXCLUDED_VIRTUAL.search(fields + " " + tags))
+
+
 def is_sports(event):
     tags = " ".join(str(t.get("slug") or t.get("label") or t.get("name") or "")
                     for t in (event.get("tags") or []) if isinstance(t, dict))
-    return bool(SPORTS.search(" ".join(str(event.get(k) or "") for k in
+    return not is_excluded(event) and bool(SPORTS.search(" ".join(str(event.get(k) or "") for k in
                                       ("title", "name", "slug")) + " " + tags))
 
 
@@ -102,7 +109,7 @@ def collect(data, events, now):
                             for t in (event.get("tags") or [])
                             if isinstance(t, dict) and (t.get("label") or t.get("name"))) or "Polymarket"
         for market in event.get("markets") or []:
-            if not isinstance(market, dict) or market.get("closed") or market.get("active") is False:
+            if not isinstance(market, dict) or market.get("closed") or market.get("active") is False or is_excluded(market):
                 continue
             outcomes = as_list(market.get("outcomes"))
             prices = as_list(market.get("outcomePrices"))
@@ -192,7 +199,7 @@ def main(path):
         peak = float(rec.get("peak") or 0)
         current = float(rec.get("probability") or 0)
         recent = int(rec.get("last_seen") or 0) >= now - 900
-        if rec.get("sports_verified_by_tag_or_title") is True and (recent or (peak >= .99 and current <= peak - .02)):
+        if rec.get("sports_verified_by_tag_or_title") is True and not is_excluded(rec) and rec.get("sport") != "Esports" and (recent or (peak >= .99 and current <= peak - .02)):
             item = {k: v for k, v in rec.items() if k != "points"}
             if peak >= .99 and current <= peak - .02:
                 item["points"] = [p for p in (rec.get("points") or []) if int(p.get("t") or 0) >= int(rec.get("peak_at") or 0)][:80]
