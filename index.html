@@ -21,7 +21,7 @@ main{max-width:1100px;margin:auto;padding:0 14px 40px}.toolbar{display:flex;gap:
 <div class="stat"><small>Crossed 99%</small><strong id="n99">—</strong></div>
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
 </div>
-<div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
+<div class="sectionhead"><h2>Confirmed live games</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Live status comes directly from Polymarket’s sports WebSocket. Only games explicitly reported live are shown. Price cards appear only when an exact game ID or event slug matches a saved market. Prices remain 3-minute snapshots, not streaming prices.</div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
 <div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. Default view excludes markets past their listed end date or explicitly not accepting orders. Game labels are estimates from listed timestamps, NOT verified live scores. Verify actual game status and market availability before using any price.</div>
 <div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="eligible">Open / not past listed end (unverified)</option><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
@@ -33,6 +33,29 @@ main{max-width:1100px;margin:auto;padding:0 14px 40px}.toolbar{display:flex;gap:
 <script>
 const FEED='https://raw.githubusercontent.com/vholl1997-collab/fanduel-scanner/data/dashboard.json';
 let rows=[],history=[],loadedAt=0;
+const liveGames=new Map();let sportsSocket=null,liveConnected=false;
+const LIVE_TTL=120000;
+function drawLive(){
+ const now=Date.now(),games=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&now-g.received<LIVE_TTL);
+ $('liveCount').textContent=games.length+' live games · '+(liveConnected?'feed connected':'feed disconnected');
+ const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+ const cards=[];
+ for(const g of games){
+  const matched=rows.filter(h=>(g.gameId&&String(h.sports_game_id||'')===String(g.gameId))||(g.slug&&h.event_slug&&norm(g.slug)===norm(h.event_slug)));
+  cards.push('<article class="card"><div class="event">'+esc((g.awayTeam||'')+' vs '+(g.homeTeam||''))+'</div><div class="league">'+esc(g.leagueAbbreviation||'Sports')+' · '+esc(g.status||'Live')+' · '+esc(g.period||'')+' '+esc(g.elapsed||'')+'</div><div class="prob">'+esc(g.score||'Score unavailable')+'</div><div class="meta"><span class="up">LIVE status reported</span><span>Received '+new Date(g.received).toLocaleTimeString()+'</span></div>'+(matched.length?matched.slice(0,6).map(h=>'<div class="history"><span>'+esc(h.title||h.outcome)+' · '+esc(h.outcome)+'</span><strong>'+pct(h.probability)+'</strong></div>').join(''):'<div class="history">No exact market match in saved snapshot</div>')+'</article>');
+ }
+ $('liveGames').innerHTML=cards.length?cards.join(''):'<div class="empty">'+(liveConnected?'No currently confirmed live games received yet. Waiting for updates…':'Live feed disconnected; no games will be labeled live until fresh updates arrive.')+'</div>';
+}
+function connectSports(){
+ if(sportsSocket&&sportsSocket.readyState<=1)return;
+ const ws=new WebSocket('wss://sports-api.polymarket.com/ws');sportsSocket=ws;
+ ws.onopen=()=>{liveConnected=true;drawLive()};
+ ws.onmessage=e=>{if(e.data==='ping'){ws.send('pong');return}try{const g=JSON.parse(e.data);if(!g||typeof g!=='object'||!g.gameId)return;g.received=Date.now();liveGames.set(String(g.gameId),g);if(liveGames.size>1000){for(const [k,v] of liveGames)if(Date.now()-v.received>LIVE_TTL)liveGames.delete(k)}drawLive()}catch(_){}};
+ ws.onclose=()=>{liveConnected=false;liveGames.clear();drawLive();setTimeout(connectSports,5000)};
+ ws.onerror=()=>{ws.close()};
+}
+setInterval(drawLive,15000);
+connectSports();
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pct=n=>(Number(n)*100).toFixed(1)+'%';
@@ -76,7 +99,7 @@ async function load(){
   $('highest').textContent=rows.length?pct(Math.max(...rows.map(h=>Number(h.probability)))):'—';
   $('n99').textContent=history.filter(h=>Number(h.peak)>=.99).length.toLocaleString();
   $('observations').textContent=history.length.toLocaleString();
-  draw();
+  draw();drawLive();
  }catch(e){
   $('status').textContent='Load failed: '+e.message;
   $('freshness').textContent='Unable to load saved market data. Please report this exact error.';
