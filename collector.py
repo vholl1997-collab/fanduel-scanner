@@ -1,6 +1,6 @@
-"""Collect timestamped public Polymarket sports price observations.
+"""Collect timestamped public Polymarket market price observations.
 
-The feed is a bounded snapshot, not comprehensive real-time coverage.
+The feed paginates active events; snapshots are not real-time odds.
 All stored timestamps are UTC Unix seconds.
 """
 import json
@@ -22,7 +22,9 @@ SPORTS = re.compile(
 )
 THRESHOLDS = (90, 95, 98, 99)
 MAX_POINTS = 300
-MAX_EVENTS = 500
+MAX_EVENTS = 20000
+PAGE_SIZE = 100
+MAX_SCAN_SECONDS = 180
 MIN_OUTCOMES = 1
 
 
@@ -47,10 +49,13 @@ def is_sports(event):
 
 def fetch_events(session):
     events = []
-    for offset in range(0, MAX_EVENTS, 100):
+    started = time.monotonic()
+    for offset in range(0, MAX_EVENTS, PAGE_SIZE):
+        if offset and time.monotonic() - started > MAX_SCAN_SECONDS:
+            raise TimeoutError("Event pagination exceeded time budget; refusing partial snapshot")
         response = session.get(API + "/events", params={
-            "active": "true", "closed": "false", "limit": 100, "offset": offset,
-            "order": "volume24hr", "ascending": "false",
+            "active": "true", "closed": "false", "limit": PAGE_SIZE, "offset": offset,
+            "order": "id", "ascending": "false",
         }, timeout=(10, 30))
         response.raise_for_status()
         batch = response.json()
@@ -59,8 +64,10 @@ def fetch_events(session):
         if not batch:
             break
         events.extend(batch)
-        if len(batch) < 100:
+        if len(batch) < PAGE_SIZE:
             break
+    else:
+        raise ValueError("Reached MAX_EVENTS cap; refusing to label partial discovery complete")
     if not events:
         raise ValueError("Empty Polymarket event feed: refusing to overwrite history")
     return events
@@ -71,13 +78,13 @@ def collect(data, events, now):
     seen = 0
     sports_events = 0
     for event in events:
-        if not isinstance(event, dict) or not is_sports(event):
+        if not isinstance(event, dict):
             continue
-        sports_events += 1
-        event_title = event.get("title") or event.get("name") or "Sports event"
+        sports_events += int(is_sports(event))
+        event_title = event.get("title") or event.get("name") or "Polymarket event"
         league = " · ".join(str(t.get("label") or t.get("name"))
                             for t in (event.get("tags") or [])
-                            if isinstance(t, dict) and (t.get("label") or t.get("name"))) or "Polymarket sports"
+                            if isinstance(t, dict) and (t.get("label") or t.get("name"))) or "Polymarket"
         for market in event.get("markets") or []:
             if not isinstance(market, dict) or market.get("closed") or market.get("active") is False:
                 continue
@@ -123,13 +130,13 @@ def collect(data, events, now):
                     points.append({"t": now, "p": round(p, 6)})
                 record["points"] = points[-MAX_POINTS:]
                 seen += 1
-    if sports_events == 0 or seen < MIN_OUTCOMES:
-        raise ValueError("No usable sports outcomes: refusing to publish empty snapshot")
+    if seen < MIN_OUTCOMES:
+        raise ValueError("No usable outcomes: refusing to publish empty snapshot")
     data.update({
         "schema_version": 2, "generated_at": now, "last_success_at": now,
         "events_scanned": len(events), "sports_events_scanned": sports_events,
-        "sports_outcomes_seen": seen,
-        "coverage": "top_500_active_events_by_volume_not_all_markets",
+        "sports_outcomes_seen": seen,\n        "all_outcomes_seen": seen,
+        "coverage": "paginated_active_events_up_to_20000_not_guaranteed_complete",
         "timestamp_unit": "unix_seconds_utc",
     })
     return seen
