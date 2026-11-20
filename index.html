@@ -36,7 +36,7 @@ const KEY='sportsScannerHistoryV1';
 let markets=[],history=loadHistory(),serverHistory={},lastLoaded=null,serverUpdated=null,serverStatus='pending';
 async function loadServerHistory(){
   try{
-    const r=await fetch('https://raw.githubusercontent.com/vholl1997-collab/fanduel-scanner/data/history.json?ts='+Date.now(),{cache:'no-store'});
+    const r=await fetch('https://raw.githubusercontent.com/vholl1997-collab/fanduel-scanner/data/dashboard.json?ts='+Date.now(),{cache:'no-store'});
     if(!r.ok)throw Error('History HTTP '+r.status);
     const d=await r.json();
     if(!d||typeof d.markets!=='object'||!d.generated_at)throw Error('History is missing or uninitialized');
