@@ -63,8 +63,8 @@ const soccerTeams={'arsenal':'359','chelsea':'363','liverpool':'364','manchester
 function teamLogo(name,sport){
  const clean=String(name||'').trim(),low=clean.toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\\s+/g,' ').trim();
  let url='';
- if(/basketball|nba|wnba/i.test(sport||'')){for(const [key,id] of Object.entries(nbaTeams))if(new RegExp('\\\\b'+key+'\\\\b').test(low)){url='https://a.espncdn.com/i/teamlogos/nba/500/'+id+'.png';break;}}
- else if(/american football|nfl/i.test(sport||'')){for(const [key,id] of Object.entries(nflTeams))if(new RegExp('\\\\b'+key+'\\\\b').test(low)){url='https://a.espncdn.com/i/teamlogos/nfl/500/'+id+'.png';break;}}
+ if(/basketball|nba|wnba/i.test(sport||'')){for(const [key,id] of Object.entries(nbaTeams))if(new RegExp('\\b'+key+'\\b').test(low)){url='https://a.espncdn.com/i/teamlogos/nba/500/'+id+'.png';break;}}
+ else if(/american football|nfl/i.test(sport||'')){for(const [key,id] of Object.entries(nflTeams))if(new RegExp('\\b'+key+'\\b').test(low)){url='https://a.espncdn.com/i/teamlogos/nfl/500/'+id+'.png';break;}}
  else if(/soccer|football/i.test(sport||'')){for(const [key,id] of Object.entries(soccerTeams))if(low.includes(key)){url='https://a.espncdn.com/i/teamlogos/soccer/500/'+id+'.png';break;}}
  const fallback='<span class="teamlogo-fallback">'+esc(clean.split(/\\s+/).map(x=>x[0]).slice(0,2).join('').toUpperCase())+'</span>';
  return '<span class="team">'+(url?'<img class="teamlogo" loading="lazy" src="'+url+'" alt="" onerror="this.replaceWith(document.createTextNode(\'⚽\'))">':fallback)+'<span>'+esc(clean)+'</span></span>';
