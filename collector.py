@@ -169,6 +169,22 @@ def main(path):
     tmp = file_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False) + "\n")
     os.replace(tmp, file_path)
+    # Small dashboard feed; keep complete observations in history.json.
+    compact = {}
+    for key, rec in data["markets"].items():
+        peak = float(rec.get("peak") or 0)
+        current = float(rec.get("probability") or 0)
+        recent = int(rec.get("last_seen") or 0) >= now - 900
+        if recent or (peak >= .99 and current <= peak - .02):
+            item = {k: v for k, v in rec.items() if k != "points"}
+            if peak >= .99 and current <= peak - .02:
+                item["points"] = [p for p in (rec.get("points") or []) if int(p.get("t") or 0) >= int(rec.get("peak_at") or 0)][:80]
+            compact[key] = item
+    dashboard = {"schema_version": 2, "generated_at": now, "last_success_at": now, "markets": compact}
+    compact_path = file_path.with_name("dashboard.json")
+    compact_tmp = compact_path.with_suffix(".tmp")
+    compact_tmp.write_text(json.dumps(dashboard, separators=(",", ":"), ensure_ascii=False) + "\n")
+    os.replace(compact_tmp, compact_path)
     print(f"UTC collection {now}: {len(events)} events scanned, {seen} outcomes updated, "
           f"{len(data['markets'])} total historical outcomes.")
 
