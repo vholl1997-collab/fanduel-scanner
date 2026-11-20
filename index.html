@@ -35,7 +35,7 @@ header{padding-top:34px;position:relative}header:before{content:'';position:abso
 <div class="stat"><small>Crossed 99%</small><strong id="n99">—</strong></div>
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
 </div>
-<div class="sectionhead"><h2>SIGNAL RADAR · LIVE ALERTS</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Only confirmed live real-sport games with qualifying probability drops are displayed: previously 99%+ and down 2+ points, or down 10+ points since the previous snapshot. No random live games. Prices are three-minute snapshots, not streaming quotes.</div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
+<div class="sectionhead"><h2>SIGNAL RADAR · LIVE ALERTS</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Only confirmed live real-sport games with qualifying probability drops are displayed: previously 99%+ and down 2+ points, or down 10+ points since the previous snapshot. No random live games. Prices are refreshed from saved snapshots automatically every minute; collection runs are best-effort, not streaming quotes.</div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
 <div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. Default view excludes markets past their listed end date or explicitly not accepting orders. Game labels are estimates from listed timestamps, NOT verified live scores. Verify actual game status and market availability before using any price.</div>
 <div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="eligible">Open / not past listed end (unverified)</option><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
@@ -46,7 +46,7 @@ header{padding-top:34px;position:relative}header:before{content:'';position:abso
 </main>
 <script>
 const FEED='https://raw.githubusercontent.com/vholl1997-collab/fanduel-scanner/data/dashboard.json';
-let rows=[],history=[],loadedAt=0;
+let rows=[],history=[],loadedAt=0,refreshTimer=null;
 const excludedVirtual=/\b(?:esports?|e[- ]?soccer|e[- ]?football|e[- ]?basketball|e[- ]?tennis|e[- ]?hockey|e[- ]?baseball|e[- ]?sports|virtual|simulation|simulated|counter[- ]?strike|cs2|csgo|call of duty|warzone|valorant|dota\s*2?|league of legends|rocket league|overwatch|fortnite|pubg|rainbow six|starcraft|fifa esports|ea sports fc|nba\s*2k)\b/i;
 const allowedMarket=h=>h.sport!=='Esports'&&!excludedVirtual.test([h.title,h.event,h.league,h.event_slug].join(' '));
 const blockedGameLeagues=new Set(['val','cs','cs2','cod','lol','dota','rl','ow','r6','sc2','pubg','fn','efootball','esoccer','ebasketball']);
@@ -56,9 +56,10 @@ const LIVE_TTL=120000;let liveLastMessage=0;
 function drawLive(){
  const now=Date.now(),games=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
  const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
- const alerts=[];
+ const alerts=[];let matchedGames=0,matchedOutcomes=0;
  for(const g of games){
-  const matched=rows.filter(h=>(g.gameId&&String(h.sports_game_id||'')===String(g.gameId))||(g.slug&&h.event_slug&&norm(g.slug)===norm(h.event_slug)));
+  const matched=rows.filter(h=>(g.gameId&&String(h.sports_game_id||'')===String(g.gameId))||(g.slug&&h.event_slug&&norm(g.slug)===norm(h.event_slug))||(g.slug&&h.market_slug&&norm(g.slug)===norm(h.market_slug)));
+  if(matched.length){matchedGames++;matchedOutcomes+=matched.length;}
   for(const h of matched){
    const p=Number(h.probability),peak=Number(h.peak),prior=h.previous_probability==null?NaN:Number(h.previous_probability);
    const peakDrop=(peak-p)*100,shortDrop=(prior-p)*100;
@@ -69,8 +70,8 @@ function drawLive(){
   }
  }
  alerts.sort((a,b)=>b.rank-a.rank);
- $('liveCount').textContent=alerts.length+' alerts · '+games.length+' live games · '+(liveConnected?(liveLastMessage?'feed receiving':'connected, awaiting data'):'feed disconnected'+(liveError?' ('+liveError+')':''));
- $('liveGames').innerHTML=alerts.length?alerts.slice(0,40).map(({g,h,peakDrop,shortDrop,reversal})=>'<article class="card"><div class="event">'+esc((g.awayTeam||'')+' vs '+(g.homeTeam||''))+'</div><div class="league">'+esc(g.leagueAbbreviation||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta"><span class="up">Confirmed live status</span><span class="down">'+(reversal?'99% REVERSAL':'MAJOR DROP')+'</span></div><div class="history"><span>'+esc(h.title||'Market')+' · '+esc(h.outcome||'')+'</span><strong>'+pct(h.probability)+'</strong></div><div class="meta"><span>Peak '+pct(h.peak)+'</span><span class="down">From peak −'+peakDrop.toFixed(1)+' pp</span><span>Since prior snapshot '+(Number.isFinite(shortDrop)?'−'+shortDrop.toFixed(1)+' pp':'unknown')+'</span><span>Price observed '+date(h.last_seen)+'</span></div></article>').join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?'No qualifying live reversals right now. Only confirmed live games with exact market matches and qualifying drops are shown.':'Connected to sports feed; waiting for game data. No live opportunities verified yet.'):'Live feed disconnected; no alerts can be verified.')+'</div>';
+ $('liveCount').textContent=alerts.length+' alerts · '+games.length+' live · '+matchedGames+' matched · '+(liveConnected?(liveLastMessage?'feed receiving':'connected, awaiting data'):'feed disconnected'+(liveError?' ('+liveError+')':''));
+ $('liveGames').innerHTML=alerts.length?alerts.slice(0,40).map(({g,h,peakDrop,shortDrop,reversal})=>'<article class="card"><div class="event">'+esc((g.awayTeam||'')+' vs '+(g.homeTeam||''))+'</div><div class="league">'+esc(g.leagueAbbreviation||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta"><span class="up">Confirmed live status</span><span class="down">'+(reversal?'99% REVERSAL':'MAJOR DROP')+'</span></div><div class="history"><span>'+esc(h.title||'Market')+' · '+esc(h.outcome||'')+'</span><strong>'+pct(h.probability)+'</strong></div><div class="meta"><span>Peak '+pct(h.peak)+'</span><span class="down">From peak −'+peakDrop.toFixed(1)+' pp</span><span>Since prior snapshot '+(Number.isFinite(shortDrop)?'−'+shortDrop.toFixed(1)+' pp':'unknown')+'</span><span>Price observed '+date(h.last_seen)+'</span></div></article>').join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?(games.length===0?'No eligible live real-sport games received recently.':matchedGames===0?'Live games received, but none matched an active market snapshot. No alerts can be verified.':('Matched '+matchedOutcomes+' market outcomes across '+matchedGames+' live games; no qualifying probability drops right now.')):'Connected to sports feed; waiting for game data. No live opportunities verified yet.'):'Live feed disconnected; no alerts can be verified.')+'</div>';
 }
 function connectSports(){
  if(document.hidden||sportsSocket&&sportsSocket.readyState<=1)return;
@@ -169,4 +170,5 @@ $('export').addEventListener('click',()=>{
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='polymarket-market-snapshot.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 });
 load();
+refreshTimer=setInterval(()=>{if(!document.hidden)load()},60000);
 </script></body></html>
