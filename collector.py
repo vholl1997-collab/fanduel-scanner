@@ -135,7 +135,8 @@ def collect(data, events, now):
     data.update({
         "schema_version": 2, "generated_at": now, "last_success_at": now,
         "events_scanned": len(events), "sports_events_scanned": sports_events,
-        "sports_outcomes_seen": seen,\n        "all_outcomes_seen": seen,
+        "sports_outcomes_seen": seen,
+        "all_outcomes_seen": seen,
         "coverage": "paginated_active_events_up_to_20000_not_guaranteed_complete",
         "timestamp_unit": "unix_seconds_utc",
     })
