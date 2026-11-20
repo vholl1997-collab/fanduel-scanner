@@ -30,6 +30,7 @@ last_tick = 0
 last_discovery = 0
 last_error = ""
 events = deque(maxlen=200)
+high_probability_observations = {}
 session = requests.Session()
 
 
@@ -124,6 +125,18 @@ def observe(token, probability, source):
         peaks[token] = peak
         prices[token] = {"probability": probability, "updated_at": now, "source": source}
         last_tick = now
+        if probability >= .97:
+            record = high_probability_observations.get(token)
+            if record is None:
+                high_probability_observations[token] = {
+                    **markets[token], "first_seen_at": now, "first_probability": probability,
+                    "highest_probability": probability, "last_seen_at": now,
+                    "last_probability": probability, "result": "pending",
+                }
+            else:
+                record["highest_probability"] = max(record["highest_probability"], probability)
+                record["last_probability"] = probability
+                record["last_seen_at"] = now
         if peak >= .99 and previous is not None and previous > probability and peak - probability >= .02:
             if previous - probability >= .001:
                 events.appendleft({
@@ -210,6 +223,23 @@ def health():
             "service": "polymarket-pulse", "status": "receiving" if age is not None and age < STALE_SECONDS else "awaiting_live_prices",
             "tracked_assets": len(markets), "last_price_age_seconds": round(age, 1) if age is not None else None,
             "last_discovery_at": last_discovery, "error": last_error,
+        })
+
+
+@app.get("/high-probability")
+def high_probability():
+    """Observed 97%+ selections; not verified wins or betting edges."""
+    with lock:
+        records = sorted(high_probability_observations.values(),
+                         key=lambda x: -x["last_seen_at"])
+        return jsonify({
+            "generated_at": time.time(), "threshold": 0.97,
+            "observations": records[:500],
+            "verified_results": 0,
+            "fan_duel_comparison_status": "not_connected",
+            "result_tracking_status": "not_connected",
+            "persistence": "memory_only_restart_resets",
+            "note": "Prices are implied probabilities, not actual win probabilities. No value claim without matching sportsbook line and verified result.",
         })
 
 
