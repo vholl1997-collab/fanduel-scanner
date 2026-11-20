@@ -115,6 +115,11 @@ def collect(data, events, now):
                     "outcome": str(outcomes[i]) if i < len(outcomes) else f"Outcome {i+1}",
                     "probability": p, "volume": market.get("volumeNum") or market.get("volume"),
                     "last_seen": now, "source": "polymarket_gamma",
+                    "event_start": event.get("startDate") or event.get("startTime") or event.get("gameStartTime"),
+                    "event_end": event.get("endDate"),
+                    "market_end": market.get("endDate"),
+                    "accepting_orders": market.get("acceptingOrders"),
+                    "market_closed": bool(market.get("closed")),
                 })
                 if p > float(record.get("peak", p)):
                     record["peak"], record["peak_at"] = p, now
