@@ -1,0 +1,210 @@
+"""Continuous read-only Polymarket price monitor for a paid Render web service.
+
+This service observes CLOB market websocket updates, tracks 99% peaks,
+and serves the latest observed outcomes. It never places orders.
+"""
+import json
+import logging
+import os
+import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
+
+import requests
+from flask import Flask, jsonify
+from websocket import WebSocketApp
+
+GAMMA = "https://gamma-api.polymarket.com"
+CLOB_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+DISCOVERY_SECONDS = 120
+MAX_ASSETS = 350
+STALE_SECONDS = 90
+app = Flask(__name__)
+lock = threading.RLock()
+markets = {}
+prices = {}
+peaks = {}
+last_tick = 0
+last_discovery = 0
+last_error = ""
+events = deque(maxlen=200)
+session = requests.Session()
+
+
+def parse_list(value):
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def discover():
+    """Fetch active sports markets; skip esports and virtual events."""
+    from collector import is_sports
+    found = {}
+    for offset in range(0, 1200, 100):
+        response = session.get(GAMMA + "/events", params={
+            "active": "true", "closed": "false", "limit": 100,
+            "offset": offset, "order": "id", "ascending": "false",
+        }, timeout=25)
+        response.raise_for_status()
+        batch = response.json()
+        if not isinstance(batch, list):
+            raise ValueError("Invalid Gamma event payload")
+        for event in batch:
+            if not is_sports(event):
+                continue
+            for market in event.get("markets") or []:
+                if market.get("closed") or market.get("active") is False:
+                    continue
+                tokens = parse_list(market.get("clobTokenIds"))
+                outcomes = parse_list(market.get("outcomes"))
+                for index, token in enumerate(tokens):
+                    if not token:
+                        continue
+                    found[str(token)] = {
+                        "token_id": str(token),
+                        "event": event.get("title", ""),
+                        "event_slug": event.get("slug", ""),
+                        "outcome": str(outcomes[index]) if index < len(outcomes) else str(index),
+                        "market": market.get("question", ""),
+                        "market_id": str(market.get("id", "")),
+                        "sport_game_id": str(event.get("gameId") or ""),
+                    }
+                    if len(found) >= MAX_ASSETS:
+                        return found
+        if len(batch) < 100:
+            break
+    return found
+
+
+def observe(token, probability, source):
+    global last_tick
+    try:
+        probability = float(probability)
+    except (ValueError, TypeError):
+        return
+    if not 0 <= probability <= 1:
+        return
+    now = time.time()
+    with lock:
+        if token not in markets:
+            return
+        previous = prices.get(token, {}).get("probability")
+        peak = max(peaks.get(token, probability), probability)
+        peaks[token] = peak
+        prices[token] = {"probability": probability, "updated_at": now, "source": source}
+        last_tick = now
+        if peak >= .99 and previous is not None and previous > probability and peak - probability >= .02:
+            if previous - probability >= .001:
+                events.appendleft({
+                    **markets[token], "peak": peak, "probability": probability,
+                    "drop_pp": round((peak - probability) * 100, 3),
+                    "updated_at": now, "source": source,
+                })
+
+
+def on_message(ws, raw):
+    if raw in ("PING", "PONG", "ping", "pong"):
+        return
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return
+    messages = payload if isinstance(payload, list) else [payload]
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        kind = message.get("event_type")
+        if kind == "price_change":
+            for change in message.get("price_changes") or []:
+                token = str(change.get("asset_id") or "")
+                # A last trade is a transaction price, not a fair-value estimate.
+                value = change.get("last_trade_price")
+                if value is not None:
+                    observe(token, value, "clob_last_trade")
+        elif kind == "last_trade_price":
+            observe(str(message.get("asset_id") or ""), message.get("price"), "clob_last_trade")
+        elif kind == "book":
+            token = str(message.get("asset_id") or "")
+            bids = message.get("bids") or message.get("buys") or []
+            asks = message.get("asks") or message.get("sells") or []
+            try:
+                bid = max(float(x["price"]) for x in bids)
+                ask = min(float(x["price"]) for x in asks)
+                if 0 <= bid <= ask <= 1:
+                    observe(token, (bid + ask) / 2, "clob_book_mid")
+            except (ValueError, TypeError, KeyError):
+                pass
+
+
+def monitor():
+    global markets, last_discovery, last_error
+    delay = 3
+    while True:
+        try:
+            found = discover()
+            if not found:
+                raise RuntimeError("No active sports CLOB assets discovered")
+            with lock:
+                markets = found
+                last_discovery = time.time()
+                last_error = ""
+            def opened(ws):
+                ws.send(json.dumps({"assets_ids": list(found), "type": "market"}))
+            def failed(ws, error):
+                global last_error
+                last_error = str(error)[:250]
+                logging.warning("CLOB socket error: %s", error)
+            ws = WebSocketApp(CLOB_WS, on_open=opened, on_message=on_message, on_error=failed)
+            # Periodically reconnect to refresh token subscriptions.
+            timer = threading.Timer(DISCOVERY_SECONDS, ws.close)
+            timer.daemon = True
+            timer.start()
+            try:
+                ws.run_forever(ping_interval=25, ping_timeout=10)
+            finally:
+                timer.cancel()
+            delay = 3
+        except Exception as exc:
+            last_error = str(exc)[:250]
+            logging.exception("Monitor failure")
+        time.sleep(delay)
+        delay = min(delay * 2, 30)
+
+
+@app.get("/health")
+def health():
+    with lock:
+        age = time.time() - last_tick if last_tick else None
+        return jsonify({
+            "service": "polymarket-pulse", "status": "receiving" if age is not None and age < STALE_SECONDS else "awaiting_live_prices",
+            "tracked_assets": len(markets), "last_price_age_seconds": round(age, 1) if age is not None else None,
+            "last_discovery_at": last_discovery, "error": last_error,
+        })
+
+
+@app.get("/signals")
+def signals():
+    now = time.time()
+    with lock:
+        active = [
+            {**markets[token], **price, "peak": peaks.get(token, price["probability"]),
+             "drop_pp": round((peaks.get(token, price["probability"]) - price["probability"]) * 100, 3)}
+            for token, price in prices.items()
+            if token in markets and now - price["updated_at"] < STALE_SECONDS
+            and peaks.get(token, 0) >= .99
+        ]
+        return jsonify({"generated_at": now, "stale_after_seconds": STALE_SECONDS,
+                        "tracked_99_outcomes": sorted(active, key=lambda x: -x["drop_pp"])[:100],
+                        "recent_alerts": list(events)[:50], "health": health().get_json()})
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    threading.Thread(target=monitor, daemon=True).start()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")), threaded=True)
