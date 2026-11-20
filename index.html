@@ -22,8 +22,8 @@ main{max-width:1100px;margin:auto;padding:0 14px 40px}.toolbar{display:flex;gap:
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
 </div>
 <div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
-<div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. “Recently observed” means seen by the collector within 15 minutes of its last successful run, not confirmed open or bettable.</div>
-<div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
+<div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. Default view excludes markets past their listed end date or explicitly not accepting orders. An open market is NOT proof a game is still underway; verify game status and availability before using any price.</div>
+<div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="eligible">Open / not past listed end (unverified)</option><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
 <div class="sectionhead"><h2>Markets & probability movement</h2><span class="muted" id="updated">—</span></div>
 <div class="filters"><input id="search" placeholder="Search team, event, market…"><select id="threshold"><option value="0">All probabilities</option><option value="90">90% and higher</option><option value="95">95% and higher</option><option value="98">98% and higher</option><option value="99">99% and higher</option><option value="drop">Biggest drops</option></select><select id="sort"><option value="volume">Volume</option><option value="prob">Probability</option><option value="peak">Highest peak</option><option value="change">Biggest move</option></select></div>
@@ -62,12 +62,12 @@ function updateFreshness(){
 
 function useBackgroundMarkets(){
  const latest=Number(serverUpdated||0)/1000 || Math.max(0,...Object.values(serverHistory).slice(0,500).map(h=>Number(h.last_seen)||0));
- markets=Object.values(serverHistory).filter(h=>Number(h.last_seen)>=latest-900&&Number.isFinite(Number(h.probability))).map(h=>({
+ markets=Object.values(serverHistory).filter(h=>Number(h.last_seen)>=latest-900&&Number.isFinite(Number(h.probability))&&marketEligibility(h)==='Unverified event status').map(h=>({
  id:h.id,title:h.title||'Polymarket market',event:h.event||'',league:h.league||'Polymarket',
- outcome:h.outcome||'Outcome',p:Number(h.probability),volume:num(h.volume),last_seen:Number(h.last_seen)
+ outcome:h.outcome||'Outcome',p:Number(h.probability),volume:num(h.volume),last_seen:Number(h.last_seen),market_end:h.market_end,event_end:h.event_end,accepting_orders:h.accepting_orders,market_closed:h.market_closed
  }));
  document.getElementById('updated').textContent='Saved '+new Date((serverUpdated||Date.now())).toLocaleTimeString();
- setStatus('Background market feed · '+markets.length+' recently observed outcomes');
+ setStatus('Background feed (event status unverified) · '+markets.length+' recently observed outcomes');
  render();
 }
 function loadHistory(){try{return JSON.parse(localStorage.getItem(KEY)||'{}')}catch{return {}}}
@@ -80,7 +80,7 @@ function normalize(e){const out=[];(e.markets||[]).forEach(m=>{if(m.closed||m.ac
 async function fetchEvents(){let all=[];for(let offset=0;offset<500;offset+=100){const url=API+'/events?active=true&closed=false&limit=100&offset='+offset+'&order=volume24hr&ascending=false';const res=await fetch(url);if(!res.ok)throw Error('Polymarket API returned '+res.status);const data=await res.json();if(!Array.isArray(data)||!data.length)break;all.push(...data);if(data.length<100)break}return all}
 function record(items){const now=Date.now();items.forEach(m=>{const h=history[m.id]||(history[m.id]={points:[],title:m.title,event:m.event});h.title=m.title;h.event=m.event;const last=h.points[h.points.length-1];if(!last||Math.abs(last.p-m.p)>=.0001||now-last.t>60000)h.points.push({t:now,p:m.p});if(h.points.length>3000)h.points=h.points.slice(-3000)});saveHistory()}
 function metrics(m){const remote=serverHistory[m.id]||{},local=history[m.id]||{};const rp=remote.points||[],lp=local.points||[];let peak=Math.max(m.p,Number(remote.peak||0)),first=m.p,earliest=Infinity;for(const pt of rp){peak=Math.max(peak,pt.p);if(pt.t<earliest){earliest=pt.t;first=pt.p}}for(const pt of lp){peak=Math.max(peak,pt.p);if(pt.t/1000<earliest){earliest=pt.t/1000;first=pt.p}}return {peak,change:m.p-first,fromPeak:m.p-peak,points:rp.length+lp.length,ever99:peak>=.99,thresholds:remote.thresholds||{}}}
-function renderReversals(){
+function marketEligibility(h){\n const end=Date.parse(h.market_end||h.event_end||"");\n if(Number.isFinite(end)&&end<=Date.now())return "Past listed end";\n if(h.market_closed===true||h.accepting_orders===false)return "Not accepting orders";\n return "Unverified event status";\n}\nfunction renderReversals(){
  const q=document.getElementById('reversalSearch').value.toLowerCase(),sort=document.getElementById('reversalSort').value,filter=document.getElementById('reversalStatus').value;
  const scanTime=serverUpdated?Math.floor(serverUpdated/1000):0;
  const rows=Object.values(serverHistory).map(h=>{
@@ -88,8 +88,8 @@ function renderReversals(){
   const recent=!!(scanTime&&seen&&seen<=scanTime&&scanTime-seen<=900);
   const pts=Array.isArray(h.points)?h.points:[];
   const firstDrop=pts.find(p=>Number(p.t)>=peakAt&&Number(p.p)<=peak-.02);
-  return {...h,peak,current,seen,peakAt,at99,recent,firstDrop,drop:peak-current};
- }).filter(h=>Number.isFinite(h.peak)&&Number.isFinite(h.current)&&h.peak>=.99&&h.drop>=.02&&h.current>=0&&h.current<=1&&(filter==='all'||(filter==='recent'&&h.recent)||(filter==='older'&&!h.recent))&&(String(h.title||'')+' '+String(h.event||'')+' '+String(h.outcome||'')).toLowerCase().includes(q));
+  return {...h,peak,current,seen,peakAt,at99,recent,firstDrop,drop:peak-current,eligibility:marketEligibility(h)};
+ }).filter(h=>Number.isFinite(h.peak)&&Number.isFinite(h.current)&&h.peak>=.99&&h.drop>=.02&&h.current>=0&&h.current<=1&&(filter==='all'||(filter==='eligible'&&h.eligibility==='Unverified event status'&&h.recent)||(filter==='recent'&&h.recent)||(filter==='older'&&!h.recent))&&(String(h.title||'')+' '+String(h.event||'')+' '+String(h.outcome||'')).toLowerCase().includes(q));
  rows.sort((a,b)=>sort==='recent'?b.seen-a.seen:sort==='peak'?b.peak-a.peak||b.drop-a.drop:b.drop-a.drop||b.seen-a.seen);
  document.getElementById('reversalCount').textContent=rows.length+' tracked';
  const root=document.getElementById('reversals');
@@ -97,7 +97,7 @@ function renderReversals(){
  const date=t=>t?new Date(t*1000).toLocaleString():'Not recorded';
  root.innerHTML=rows.slice(0,100).map(h=>{
   const duration=h.firstDrop&&h.peakAt?Math.max(0,Math.round((Number(h.firstDrop.t)-h.peakAt)/60)):null;
-  return '<article class="card"><div class="topline"><div><div class="event">'+esc(h.title||h.event||'Sports market')+'</div><div class="league">'+esc(h.event||h.league||'Polymarket')+' · '+esc(h.outcome||'Outcome')+'</div></div><div class="prob">'+pct(h.current)+'</div></div><div class="meta"><span class="pill">'+(h.recent?'Recently observed':'Historical / older')+'</span><span>Peak <b>'+pct(h.peak)+'</b></span><span>From peak <b class="down">−'+(h.drop*100).toFixed(1)+' pp</b></span></div><div class="meta"><span>First observed at 99%+: '+date(h.at99)+'</span><span>Recorded peak: '+date(h.peakAt)+'</span><span>First saved drop ≥2 pp after peak: '+date(h.firstDrop?Number(h.firstDrop.t):0)+'</span>'+(duration!==null?'<span>Peak-to-drop observed interval: '+duration+' min</span>':'')+'<span>Last observed: '+date(h.seen)+'</span></div><div class="history"><span>Historical snapshots only</span><span>Not confirmed tradable</span></div></article>';
+  return '<article class="card"><div class="topline"><div><div class="event">'+esc(h.title||h.event||'Sports market')+'</div><div class="league">'+esc(h.event||h.league||'Polymarket')+' · '+esc(h.outcome||'Outcome')+'</div></div><div class="prob">'+pct(h.current)+'</div></div><div class="meta"><span class="pill">'+(h.eligibility==='Unverified event status'?(h.recent?'Recently observed · game status unverified':'Historical / older'):h.eligibility)+'</span><span>Peak <b>'+pct(h.peak)+'</b></span><span>From peak <b class="down">−'+(h.drop*100).toFixed(1)+' pp</b></span></div><div class="meta"><span>First observed at 99%+: '+date(h.at99)+'</span><span>Recorded peak: '+date(h.peakAt)+'</span><span>First saved drop ≥2 pp after peak: '+date(h.firstDrop?Number(h.firstDrop.t):0)+'</span>'+(duration!==null?'<span>Peak-to-drop observed interval: '+duration+' min</span>':'')+'<span>Last observed: '+date(h.seen)+'</span></div><div class="history"><span>Historical snapshots only</span><span>Not confirmed tradable</span></div></article>';
  }).join('');
 }
 function pct(n){return (n*100).toFixed(1)+'%'}
