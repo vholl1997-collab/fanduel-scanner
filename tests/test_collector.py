@@ -1,5 +1,5 @@
 import unittest
-from collector import as_list, collect, is_sports
+from collector import as_list, collect, is_sports, sport_name
 
 
 def sample_event(price="0.99"):
@@ -18,6 +18,17 @@ class CollectorTests(unittest.TestCase):
     def test_sports_filter(self):
         self.assertTrue(is_sports(sample_event()))
         self.assertFalse(is_sports({"title": "Presidential election", "tags": []}))
+
+    def test_sport_category_and_previous_snapshot(self):
+        event = sample_event()
+        self.assertEqual(sport_name(event), "Basketball")
+        data = {"markets": {}}
+        collect(data, [event], 1000)
+        collect(data, [sample_event("0.70")], 1300)
+        record = data["markets"]["m1:0"]
+        self.assertEqual(record["sport"], "Basketball")
+        self.assertEqual(record["previous_probability"], 0.99)
+        self.assertEqual(record["previous_seen"], 1000)
 
     def test_list_parsing(self):
         self.assertEqual(as_list('["Yes","No"]'), ["Yes", "No"])
