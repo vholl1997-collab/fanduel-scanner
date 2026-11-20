@@ -30,6 +30,13 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(record["previous_probability"], 0.99)
         self.assertEqual(record["previous_seen"], 1000)
 
+    def test_excludes_esports_and_virtual_sports(self):
+        for title in ("CS2 Counter-Strike match", "Call of Duty", "eBasketball NBA 2K", "eSoccer FIFA", "Valorant", "Virtual Soccer"):
+            event = sample_event()
+            event["title"] = title
+            self.assertFalse(is_sports(event), title)
+        self.assertTrue(is_sports(sample_event()))
+
     def test_list_parsing(self):
         self.assertEqual(as_list('["Yes","No"]'), ["Yes", "No"])
         self.assertEqual(as_list("invalid"), [])
