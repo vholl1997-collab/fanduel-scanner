@@ -6,6 +6,7 @@ and serves the latest observed outcomes. It never places orders.
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -18,7 +19,7 @@ from websocket import WebSocketApp
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 DISCOVERY_SECONDS = 120
-MAX_ASSETS = 350
+MAX_ASSETS = 1500
 STALE_SECONDS = 90
 app = Flask(__name__)
 lock = threading.RLock()
@@ -40,6 +41,27 @@ def parse_list(value):
         return parsed if isinstance(parsed, list) else []
     except (TypeError, ValueError):
         return []
+
+
+def classify_market(market, outcome):
+    """Keep spread and total lines distinct; do not infer missing lines."""
+    question = str(market.get("question") or "")
+    kind = str(market.get("sportsMarketType") or market.get("sports_market_type") or "").lower()
+    label = question + " " + str(outcome)
+    if "spread" in kind or re.search(r"\\b(spread|handicap)\\b", label, re.I):
+        category = "spread"
+    elif "total" in kind or re.search(r"\\b(over|under|o/u|total points|total goals)\\b", label, re.I):
+        category = "total"
+    else:
+        category = "other"
+    line = market.get("line")
+    if line is None:
+        line = market.get("groupItemThreshold")
+    if line is None:
+        match = re.search(r"(?<!\\d)[+-]?\\d+(?:\\.\\d+)?", str(outcome))
+        if match:
+            line = match.group()
+    return category, str(line) if line is not None else None
 
 
 def discover():
@@ -66,6 +88,7 @@ def discover():
                 for index, token in enumerate(tokens):
                     if not token:
                         continue
+                    category, line = classify_market(market, outcomes[index] if index < len(outcomes) else "")
                     found[str(token)] = {
                         "token_id": str(token),
                         "event": event.get("title", ""),
@@ -73,6 +96,8 @@ def discover():
                         "outcome": str(outcomes[index]) if index < len(outcomes) else str(index),
                         "market": market.get("question", ""),
                         "market_id": str(market.get("id", "")),
+                        "market_type": category,
+                        "line": line,
                         "sport_game_id": str(event.get("gameId") or ""),
                     }
                     if len(found) >= MAX_ASSETS:
