@@ -21,7 +21,7 @@ main{max-width:1100px;margin:auto;padding:0 14px 40px}.toolbar{display:flex;gap:
 <div class="stat"><small>Crossed 99%</small><strong id="n99">—</strong></div>
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
 </div>
-<div class="sectionhead"><h2>Confirmed live games</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Only Polymarket-confirmed in-progress real sports are shown here. If zero games appear, no eligible live games have been received; this does not mean all sports worldwide are inactive. Market prices are three-minute snapshots when an exact match is available.</div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
+<div class="sectionhead"><h2>Live probability alerts</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Only confirmed live real-sport games with qualifying probability drops are displayed: previously 99%+ and down 2+ points, or down 10+ points since the previous snapshot. No random live games. Prices are three-minute snapshots, not streaming quotes.</div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
 <div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. Default view excludes markets past their listed end date or explicitly not accepting orders. Game labels are estimates from listed timestamps, NOT verified live scores. Verify actual game status and market availability before using any price.</div>
 <div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="eligible">Open / not past listed end (unverified)</option><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
@@ -41,14 +41,22 @@ const liveGames=new Map();let sportsSocket=null,liveConnected=false;
 const LIVE_TTL=120000;
 function drawLive(){
  const now=Date.now(),games=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
- $('liveCount').textContent=games.length+' live games · '+(liveConnected?'feed connected':'feed disconnected');
  const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
- const cards=[];
+ const alerts=[];
  for(const g of games){
   const matched=rows.filter(h=>(g.gameId&&String(h.sports_game_id||'')===String(g.gameId))||(g.slug&&h.event_slug&&norm(g.slug)===norm(h.event_slug)));
-  cards.push('<article class="card"><div class="event">'+esc((g.awayTeam||'')+' vs '+(g.homeTeam||''))+'</div><div class="league">'+esc(g.leagueAbbreviation||'Sports')+' · '+esc(g.status||'Live')+' · '+esc(g.period||'')+' '+esc(g.elapsed||'')+'</div><div class="prob">'+esc(g.score||'Score unavailable')+'</div><div class="meta"><span class="up">LIVE status reported</span><span>Received '+new Date(g.received).toLocaleTimeString()+'</span></div>'+(matched.length?matched.slice(0,6).map(h=>'<div class="history"><span>'+esc(h.title||h.outcome)+' · '+esc(h.outcome)+'</span><strong>'+pct(h.probability)+'</strong></div>').join(''):'<div class="history">No exact market match in saved snapshot</div>')+'</article>');
+  for(const h of matched){
+   const p=Number(h.probability),peak=Number(h.peak),prior=h.previous_probability==null?NaN:Number(h.previous_probability);
+   const peakDrop=(peak-p)*100,shortDrop=(prior-p)*100;
+   const reversal=peak>=.99&&peakDrop>=2;
+   const majorDrop=Number.isFinite(shortDrop)&&shortDrop>=10;
+   if(!reversal&&!majorDrop)continue;
+   alerts.push({g,h,peakDrop,shortDrop,reversal,majorDrop,rank:Math.max(reversal?peakDrop:0,majorDrop?shortDrop:0)});
+  }
  }
- $('liveGames').innerHTML=cards.length?cards.join(''):'<div class="empty">'+(liveConnected?'No eligible live real-sport games received yet. This feed may not cover every sport or match.':'Live feed disconnected; no games will be labeled live until fresh updates arrive.')+'</div>';
+ alerts.sort((a,b)=>b.rank-a.rank);
+ $('liveCount').textContent=alerts.length+' qualifying alerts · '+games.length+' confirmed live games · '+(liveConnected?'feed connected':'feed disconnected');
+ $('liveGames').innerHTML=alerts.length?alerts.slice(0,40).map(({g,h,peakDrop,shortDrop,reversal})=>'<article class="card"><div class="event">'+esc((g.awayTeam||'')+' vs '+(g.homeTeam||''))+'</div><div class="league">'+esc(g.leagueAbbreviation||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta"><span class="up">Confirmed live status</span><span class="down">'+(reversal?'99% REVERSAL':'MAJOR DROP')+'</span></div><div class="history"><span>'+esc(h.title||'Market')+' · '+esc(h.outcome||'')+'</span><strong>'+pct(h.probability)+'</strong></div><div class="meta"><span>Peak '+pct(h.peak)+'</span><span class="down">From peak −'+peakDrop.toFixed(1)+' pp</span><span>Since prior snapshot '+(Number.isFinite(shortDrop)?'−'+shortDrop.toFixed(1)+' pp':'unknown')+'</span><span>Price observed '+date(h.last_seen)+'</span></div></article>').join(''):'<div class="empty">'+(liveConnected?'No qualifying live reversals right now. Only exact-match live games with a 99% reversal (2+ percentage-point fall) or a 10+ point drop since the previous snapshot appear here.':'Live feed disconnected; no alerts can be verified.')+'</div>';
 }
 function connectSports(){
  if(sportsSocket&&sportsSocket.readyState<=1)return;
