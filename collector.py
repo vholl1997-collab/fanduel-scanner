@@ -128,6 +128,8 @@ def collect(data, events, now):
                 record.update({
                     "sports_verified_by_tag_or_title": True,
                     "sport": sport,
+                    "event_slug": event.get("slug"),
+                    "sports_game_id": event.get("gameId") or event.get("game_id"),
                     "previous_probability": record.get("probability"),
                     "previous_seen": record.get("last_seen"),
                     "title": market.get("question") or market.get("groupItemTitle") or event_title,
