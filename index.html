@@ -104,7 +104,7 @@ function drawLive(){
   const key=String(h.sports_game_id);
   if(known.has(key)||fallback.has(key))continue;
   const title=String(h.event||'');
-  const parts=title.split(/\\s+(?:vs\\.?|versus|v\\.?|at)\\s+/i);
+  const parts=title.split(new RegExp('\\s+(?:vs\\.?|versus|v\\.?|at)\\s+','i'));
   const g={gameId:key,homeTeam:parts.length===2?parts[1]:title,awayTeam:parts.length===2?parts[0]:'',leagueAbbreviation:h.sport||'Sports',sport:h.sport,period:h.event_period||'Live',score:h.event_score,live:true,ended:false,received:Number(h.last_seen)*1000,source:'gamma'};
   if(allowedGame(g))fallback.set(key,g);
  }
