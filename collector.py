@@ -85,7 +85,9 @@ def collect(data, events, now):
     for event in events:
         if not isinstance(event, dict):
             continue
-        sports_events += int(is_sports(event))
+        if not is_sports(event):
+            continue
+        sports_events += 1
         event_title = event.get("title") or event.get("name") or "Polymarket event"
         league = " · ".join(str(t.get("label") or t.get("name"))
                             for t in (event.get("tags") or [])
@@ -115,6 +117,7 @@ def collect(data, events, now):
                     }
                     store[key] = record
                 record.update({
+                    "sports_verified_by_tag_or_title": True,
                     "title": market.get("question") or market.get("groupItemTitle") or event_title,
                     "event": event_title, "league": league,
                     "outcome": str(outcomes[i]) if i < len(outcomes) else f"Outcome {i+1}",
@@ -175,7 +178,7 @@ def main(path):
         peak = float(rec.get("peak") or 0)
         current = float(rec.get("probability") or 0)
         recent = int(rec.get("last_seen") or 0) >= now - 900
-        if recent or (peak >= .99 and current <= peak - .02):
+        if rec.get("sports_verified_by_tag_or_title") is True and (recent or (peak >= .99 and current <= peak - .02)):
             item = {k: v for k, v in rec.items() if k != "points"}
             if peak >= .99 and current <= peak - .02:
                 item["points"] = [p for p in (rec.get("points") or []) if int(p.get("t") or 0) >= int(rec.get("peak_at") or 0)][:80]
