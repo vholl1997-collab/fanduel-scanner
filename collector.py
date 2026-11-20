@@ -17,7 +17,7 @@ from urllib3.util.retry import Retry
 
 API = "https://gamma-api.polymarket.com"
 SPORTS = re.compile(
-    r"\b(?:sports|nba|wnba|nfl|mlb|nhl|ncaa|ncaab|ncaaf|soccer|football|tennis|golf|ufc|mma|boxing|cricket|rugby|formula.?1|f1|esports|basketball|baseball|hockey|valorant)\b",
+    r"\b(?:sports|nba|wnba|nfl|mlb|nhl|ncaa|ncaab|ncaaf|soccer|football|tennis|table.?tennis|golf|ufc|mma|boxing|cricket|rugby|formula.?1|f1|esports|basketball|baseball|hockey|valorant|counter.?strike|dota|badminton|volleyball)\b",
     re.I,
 )
 THRESHOLDS = (90, 95, 98, 99)
@@ -45,6 +45,14 @@ def is_sports(event):
                     for t in (event.get("tags") or []) if isinstance(t, dict))
     return bool(SPORTS.search(" ".join(str(event.get(k) or "") for k in
                                       ("title", "name", "slug")) + " " + tags))
+
+
+def sport_name(event):
+    value = " ".join([str(event.get("title") or ""), str(event.get("slug") or "")] + [str(t.get("label") or t.get("slug") or "") for t in event.get("tags") or [] if isinstance(t, dict)]).lower()
+    for label, pattern in [("Table tennis", r"table.?tennis|ping.?pong"), ("Tennis", r"tennis"), ("Basketball", r"nba|wnba|basketball|ncaab"), ("Soccer", r"soccer|premier league|champions league|football|serie a|la liga"), ("Baseball", r"mlb|baseball"), ("American football", r"nfl|ncaaf"), ("Hockey", r"nhl|hockey"), ("Esports", r"esports|counter.?strike|valorant|dota"), ("Cricket", r"cricket"), ("MMA", r"ufc|mma"), ("Golf", r"golf"), ("Rugby", r"rugby"), ("Volleyball", r"volleyball"), ("Badminton", r"badminton")]:
+        if re.search(pattern, value):
+            return label
+    return "Other sports"
 
 
 def fetch_events(session):
@@ -89,6 +97,7 @@ def collect(data, events, now):
             continue
         sports_events += 1
         event_title = event.get("title") or event.get("name") or "Polymarket event"
+        sport = sport_name(event)
         league = " · ".join(str(t.get("label") or t.get("name"))
                             for t in (event.get("tags") or [])
                             if isinstance(t, dict) and (t.get("label") or t.get("name"))) or "Polymarket"
@@ -118,12 +127,15 @@ def collect(data, events, now):
                     store[key] = record
                 record.update({
                     "sports_verified_by_tag_or_title": True,
+                    "sport": sport,
+                    "previous_probability": record.get("probability"),
+                    "previous_seen": record.get("last_seen"),
                     "title": market.get("question") or market.get("groupItemTitle") or event_title,
                     "event": event_title, "league": league,
                     "outcome": str(outcomes[i]) if i < len(outcomes) else f"Outcome {i+1}",
                     "probability": p, "volume": market.get("volumeNum") or market.get("volume"),
                     "last_seen": now, "source": "polymarket_gamma",
-                    "event_start": event.get("startDate") or event.get("startTime") or event.get("gameStartTime"),
+                    "event_start": event.get("gameStartTime") or event.get("startTime") or event.get("startDate"),
                     "event_end": event.get("endDate"),
                     "market_end": market.get("endDate"),
                     "accepting_orders": market.get("acceptingOrders"),
