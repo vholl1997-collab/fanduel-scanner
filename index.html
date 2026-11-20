@@ -105,7 +105,7 @@ async function load(){
   loadedAt=Number(data.last_success_at||data.generated_at);
   history=Object.values(data.markets).filter(h=>h.sports_verified_by_tag_or_title===true&&allowedMarket(h));
   rows=history.filter(h=>Number(h.last_seen)>=loadedAt-900&&eligible(h)&&Number.isFinite(Number(h.probability)));
-  $('status').textContent='Historical price feed connected · live games shown below;
+  $('status').textContent='Historical price feed connected · live games shown below';
   $('updated').textContent='Saved '+date(loadedAt);
   const mins=Math.max(0,Math.floor((Date.now()/1000-loadedAt)/60));
   $('freshness').textContent='Background history: '+(mins<=15?'RECENT':mins<=60?'DELAYED':'STALE')+' · saved '+date(loadedAt)+' · '+mins+' min ago. Game status is not verified.';
