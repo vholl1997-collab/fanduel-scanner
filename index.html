@@ -75,18 +75,35 @@ function matchupLogos(text,sport){
  return '<div class="teamline">'+teamLogo(parts[0],sport)+'<span class="versus">VS</span>'+teamLogo(parts[1],sport)+'</div>';
 }
 
+function matchLiveMarkets(g){
+ const norm=x=>String(x||'').toLowerCase().normalize('NFKD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+ const id=String(g.gameId||''),slug=norm(g.slug),home=norm(g.homeTeam),away=norm(g.awayTeam);
+ const tokens=x=>x.split(' ').filter(t=>t.length>1&&!['fc','cf','sc','the','club','team'].includes(t));
+ const sameTeam=(a,b)=>a===b||(a.length>=5&&b.length>=5&&(a.includes(b)||b.includes(a)));
+ const matches=rows.filter(h=>{
+  if(!allowedMarket(h)||!eligible(h)||Number(h.last_seen)<Date.now()/1000-900)return false;
+  if(id&&h.sports_game_id&&id===String(h.sports_game_id))return true;
+  if(slug&&((h.event_slug&&slug===norm(h.event_slug))||(h.market_slug&&slug===norm(h.market_slug))))return true;
+  if(!home||!away||home.length<4||away.length<4)return false;
+  const event=norm(h.event||''),title=norm(h.title||'');
+  const names=(event+' '+title);
+  return (sameTeam(home,norm(h.event||'').split(' vs ')[0])&&sameTeam(away,norm(h.event||'').split(' vs ')[1]||''))||
+   (tokens(home).some(t=>t.length>=4&&names.includes(t))&&tokens(away).some(t=>t.length>=4&&names.includes(t))&&names.includes(' vs '));
+ });
+ // Never infer a match from a single shared team name.
+ return matches;
+}
 function drawLive(){
  const now=Date.now(),games=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
- const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
  const alerts=[];let matchedGames=0,matchedOutcomes=0;
  for(const g of games){
-  const matched=rows.filter(h=>(g.gameId&&String(h.sports_game_id||'')===String(g.gameId))||(g.slug&&h.event_slug&&norm(g.slug)===norm(h.event_slug))||(g.slug&&h.market_slug&&norm(g.slug)===norm(h.market_slug)));
+  const matched=matchLiveMarkets(g);
   if(matched.length){matchedGames++;matchedOutcomes+=matched.length;}
   for(const h of matched){
    const p=Number(h.probability),peak=Number(h.peak),prior=h.previous_probability==null?NaN:Number(h.previous_probability);
    const peakDrop=(peak-p)*100,shortDrop=(prior-p)*100;
-   const reversal=peak>=.99&&peakDrop>=2;
-   const majorDrop=Number.isFinite(shortDrop)&&shortDrop>=10;
+   const reversal=peak>=.99&&peakDrop>=2&&Number(h.peak_at)>=Number(h.first_seen||0);
+   const majorDrop=Number.isFinite(shortDrop)&&shortDrop>=10&&Number(h.previous_seen)>0;
    if(!reversal&&!majorDrop)continue;
    alerts.push({g,h,peakDrop,shortDrop,reversal,majorDrop,rank:Math.max(reversal?peakDrop:0,majorDrop?shortDrop:0)});
   }
