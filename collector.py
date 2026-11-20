@@ -57,6 +57,11 @@ def fetch_events(session):
             "active": "true", "closed": "false", "limit": PAGE_SIZE, "offset": offset,
             "order": "id", "ascending": "false",
         }, timeout=(10, 30))
+        # Gamma may reject deep offset pagination with HTTP 422.
+        # Preserve the usable pages already fetched instead of failing every scan.
+        if response.status_code == 422 and offset > 0 and events:
+            print(f"Gamma rejected offset {offset} (422); saving {len(events)} fetched events with partial coverage.")
+            break
         response.raise_for_status()
         batch = response.json()
         if not isinstance(batch, list):
@@ -142,7 +147,7 @@ def collect(data, events, now):
         "events_scanned": len(events), "sports_events_scanned": sports_events,
         "sports_outcomes_seen": seen,
         "all_outcomes_seen": seen,
-        "coverage": "paginated_active_events_up_to_20000_not_guaranteed_complete",
+        "coverage": "paginated_active_events_until_api_limit_not_guaranteed_complete",
         "timestamp_unit": "unix_seconds_utc",
     })
     return seen
