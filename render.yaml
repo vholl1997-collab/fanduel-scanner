@@ -1,7 +1,11 @@
 services:
   - type: web
-    name: fanduel-scanner
-    env: python
-    plan: free
+    name: polymarket-pulse-live
+    runtime: python
+    plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    startCommand: python realtime_service.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
