@@ -93,7 +93,22 @@ function matchLiveMarkets(g){
  return matches;
 }
 function drawLive(){
- const now=Date.now(),games=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
+ const now=Date.now();
+ const wsGames=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
+ // The sports socket is update-only: it does not replay every ongoing game on connect.
+ // Supplement it with explicit live=true statuses from the latest Gamma snapshot.
+ const known=new Set(wsGames.map(g=>String(g.gameId)));
+ const fallback=new Map();
+ for(const h of rows){
+  if(h.event_live!==true||!h.sports_game_id||!allowedMarket(h)||Number(h.last_seen)<now/1000-900)continue;
+  const key=String(h.sports_game_id);
+  if(known.has(key)||fallback.has(key))continue;
+  const title=String(h.event||'');
+  const parts=title.split(/\\s+(?:vs\\.?|versus|v\\.?|at)\\s+/i);
+  const g={gameId:key,homeTeam:parts.length===2?parts[1]:title,awayTeam:parts.length===2?parts[0]:'',leagueAbbreviation:h.sport||'Sports',sport:h.sport,period:h.event_period||'Live',score:h.event_score,live:true,ended:false,received:Number(h.last_seen)*1000,source:'gamma'};
+  if(allowedGame(g))fallback.set(key,g);
+ }
+ const games=[...wsGames,...fallback.values()];
  const alerts=[];let matchedGames=0,matchedOutcomes=0;
  for(const g of games){
   const matched=matchLiveMarkets(g);
@@ -120,7 +135,7 @@ function drawLive(){
   const price=market?'<div class="history"><span>'+esc(market.title||'Market')+' · '+esc(market.outcome||'')+'</span><strong>'+pct(market.probability)+'</strong></div><div class="meta">Last market snapshot '+date(market.last_seen)+'</div>':'<div class="meta">Live game received · No verified matching Polymarket price yet</div>';
   const details=gameAlerts.map(a=>'<div class="meta"><span class="down">'+(a.reversal?'99% REVERSAL':'MAJOR DROP')+' · '+esc(a.h.outcome||'')+' · '+pct(a.h.probability)+'</span><span>Peak '+pct(a.h.peak)+'</span><span>Drop −'+a.peakDrop.toFixed(1)+' pp</span></div>').join('');
   return '<article class="card">'+matchupLogos(teams,g.sport||g.league||g.leagueAbbreviation)+'<div class="event">'+esc(teams)+'</div><div class="league">'+esc(g.leagueAbbreviation||g.sport||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta">'+signal+'</div>'+price+details+'</article>';
- }).join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?'No confirmed live real-sport games received recently. Waiting for eligible live updates.':'Connected to sports feed; waiting for live game updates.'):'Live feed disconnected; reconnecting. ('+esc(liveError||'No connection')+')')+'</div>';
+ }).join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?'No confirmed live games found in sports updates or latest market snapshot.':'Connected to sports feed; waiting for live game updates.'):'Live feed disconnected; reconnecting. ('+esc(liveError||'No connection')+')')+'</div>';
 }
 function connectSports(){
  if(document.hidden||sportsSocket&&sportsSocket.readyState<=1)return;
