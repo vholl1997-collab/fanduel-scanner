@@ -47,6 +47,7 @@ async function loadServerHistory(){
   }catch(e){serverStatus='error';serverUpdated=null;setStatus('Background history unavailable: '+e.message,'error')}
   updateFreshness();
   renderReversals();
+  if(serverStatus!=='ok'){document.getElementById('cards').innerHTML='<div class="empty">Background data could not be loaded. Try Refresh markets.</div>';document.getElementById('reversals').innerHTML='<div class="empty">History unavailable right now.</div>';}
 }
 function updateFreshness(){
   const el=document.getElementById('freshness');
@@ -112,7 +113,6 @@ function render(){const q=document.getElementById('search').value.toLowerCase(),
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function refresh(){await loadServerHistory();return;const b=document.getElementById('refresh');b.disabled=true;setStatus('Fetching public market data…');try{const events=await fetchEvents();const found=events.filter(isSports);markets=found.flatMap(normalize);record(markets);lastLoaded=new Date();document.getElementById('updated').textContent='Updated '+lastLoaded.toLocaleTimeString();setStatus('Current feed connected · '+events.length+' events scanned');updateFreshness();render()}catch(e){setStatus(e.message+' · Try again later','error');document.getElementById('cards').innerHTML='<div class="empty">Could not load the public feed. Check your connection and try Refresh.</div>'}finally{b.disabled=false}}
 document.getElementById('refresh').addEventListener('click',refresh);['reversalSearch','reversalSort','reversalStatus'].forEach(id=>document.getElementById(id).addEventListener('input',renderReversals));['search','threshold','sort'].forEach(id=>document.getElementById(id).addEventListener('input',render));
-document.getElementById('export').addEventListener('click',()=>{const rows=[['market_id','title','event','observed_at','probability']];Object.entries(serverHistory).forEach(([id,h])=>(h.points||[]).forEach(p=>rows.push([id,h.title,h.event,new Date(p.t*1000).toISOString(),p.p])));Object.entries(history).forEach(([id,h])=>(h.points||[]).forEach(p=>rows.push([id,h.title,h.event,new Date(p.t).toISOString(),p.p])));const csv=rows.map(r=>r.map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(',')).join('
-');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='sports-probability-history.csv';a.click();URL.revokeObjectURL(a.href)});
+document.getElementById('export').addEventListener('click',()=>{const rows=[['market_id','title','event','observed_at','probability']];Object.entries(serverHistory).forEach(([id,h])=>(h.points||[]).forEach(p=>rows.push([id,h.title,h.event,new Date(p.t*1000).toISOString(),p.p])));Object.entries(history).forEach(([id,h])=>(h.points||[]).forEach(p=>rows.push([id,h.title,h.event,new Date(p.t).toISOString(),p.p])));const csv=rows.map(r=>r.map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='sports-probability-history.csv';a.click();URL.revokeObjectURL(a.href)});
 loadServerHistory();
 </script></body></html>
