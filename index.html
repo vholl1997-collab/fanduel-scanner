@@ -94,6 +94,17 @@ function matchLiveMarkets(g){
  });
  return matches;
 }
+function readableSport(g){
+ const raw=String(g.leagueAbbreviation||g.sport||g.league||'Sports').trim();
+ const key=raw.toLowerCase().replace(/[^a-z0-9]/g,'');
+ const names={cfb:'College Football',ncaaf:'College Football',cbb:'Men’s College Basketball',ncaab:'Men’s College Basketball',ncaamb:'Men’s College Basketball',ncaawb:'Women’s College Basketball',ncaaw:'Women’s College Basketball',wcbb:'Women’s College Basketball',wncaab:'Women’s College Basketball',nba:'NBA Basketball',wnba:'WNBA Basketball',nfl:'NFL Football',nhl:'NHL Hockey',mlb:'MLB Baseball',challenger:'Tennis · Challenger Tour',atp:'Men’s Tennis',wta:'Women’s Tennis',ufc:'UFC',mma:'Mixed Martial Arts',epl:'Premier League Soccer',ucl:'Champions League Soccer',mls:'Major League Soccer',aus:'Australian Soccer'};
+ return names[key]||raw.replace(/\b(?:ncaawb|ncaaw)\b/ig,'Women’s College Basketball').replace(/\b(?:cfb|ncaaf)\b/ig,'College Football').replace(/\b(?:cbb|ncaab)\b/ig,'Men’s College Basketball');
+}
+function readablePeriod(value){
+ const raw=String(value||'Live').trim();
+ const labels={Q1:'1st Quarter',Q2:'2nd Quarter',Q3:'3rd Quarter',Q4:'4th Quarter',H1:'1st Half',H2:'2nd Half',S1:'1st Set',S2:'2nd Set',S3:'3rd Set',S4:'4th Set',S5:'5th Set',OT:'Overtime',HT:'Halftime'};
+ return labels[raw.toUpperCase()]||raw;
+}
 function drawLive(){
  const now=Date.now();
  const wsGames=[...liveGames.values()].filter(g=>g.live===true&&g.ended!==true&&allowedGame(g)&&now-g.received<LIVE_TTL);
@@ -136,7 +147,7 @@ function drawLive(){
   const signal=gameAlerts.length?'<span class="down">⚡ '+gameAlerts.length+' REVERSAL ALERT'+(gameAlerts.length===1?'':'S')+'</span>':'<span class="up">LIVE · MONITORING</span>';
   const price=market?matched.filter(h=>Number.isFinite(Number(h.probability))).slice(0,8).map(h=>'<div class="history"><span>'+esc(h.market||h.title||'Market')+' · '+esc(h.outcome||'')+(h.line!=null?' · '+esc(h.line):'')+'</span><strong>'+pct(h.probability)+'</strong></div>').join('')+'<div class="meta">Price source: '+(market.updated_at?'live CLOB quote · '+Math.round(Date.now()/1000-market.updated_at)+'s old':'saved snapshot · '+date(market.last_seen))+'</div>':'<div class="meta">Live game received · No verified matching Polymarket price yet</div>';
   const details=gameAlerts.map(a=>'<div class="meta"><span class="down">'+(a.reversal?'99% REVERSAL':'MAJOR DROP')+' · '+esc(a.h.outcome||'')+' · '+pct(a.h.probability)+'</span><span>Peak '+pct(a.h.peak)+'</span><span>Drop −'+a.peakDrop.toFixed(1)+' pp</span></div>').join('');
-  return '<article class="card">'+matchupLogos(teams,g.sport||g.league||g.leagueAbbreviation)+'<div class="event">'+esc(teams)+'</div><div class="league">'+esc(g.leagueAbbreviation||g.sport||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta">'+signal+'</div>'+price+details+'</article>';
+  return '<article class="card">'+matchupLogos(teams,g.sport||g.league||g.leagueAbbreviation)+'<div class="event">'+esc(teams)+'</div><div class="league">'+esc(readableSport(g))+' · '+esc(readablePeriod(g.period||g.status||'Live'))+'</div><div class="meta">'+signal+'</div>'+price+details+'</article>';
  }).join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?'No confirmed live games found in sports updates or latest market snapshot.':'Connected to sports feed; waiting for live game updates.'):'Live feed disconnected; reconnecting. ('+esc(liveError||'No connection')+')')+'</div>';
 }
 function connectSports(){
