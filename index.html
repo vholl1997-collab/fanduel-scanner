@@ -37,7 +37,11 @@ header{padding-top:34px;position:relative}header:before{content:'';position:abso
 <div class="stat"><small>Crossed 99%</small><strong id="n99">—</strong></div>
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
 </div>
-<div class="sectionhead"><h2>LIVE NOW · SIGNAL RADAR</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Confirmed live real-sport games appear as the sports feed reports them. Reversal alerts are highlighted when a market previously reached 99%+ and drops 2+ points, or drops 10+ points since the prior snapshot. Prices are refreshed from saved snapshots automatically every minute; collection runs are best-effort, not streaming quotes.</div><div class="sectionhead"><h2>REAL-TIME MARKET PRICES</h2><span class="muted" id="rtStatus">Connecting to Render…</span></div><div class="notice" style="margin:0 0 12px">Direct Polymarket CLOB observations from Render, checked every 5 seconds while this page is open. A 97–99% price is a market quote, not a guaranteed win. These markets are not independently verified as live games; timestamps show quote freshness.</div><div id="rtMarkets" class="cards"><div class="empty">Waiting for real-time price feed…</div></div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
+<div class="sectionhead"><h2>LIVE NOW · SIGNAL RADAR</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Confirmed live real-sport games appear as the sports feed reports them. Reversal alerts are highlighted when a market previously reached 99%+ and drops 2+ points, or drops 10+ points since the prior snapshot. Prices are refreshed from saved snapshots automatically every minute; collection runs are best-effort, not streaming quotes.</div><div class="sectionhead"><h2>KALSHI · SPORTS MARKETS</h2><span class="muted" id="kalshiStatus">Connecting…</span></div>
+<div class="notice" style="margin:0 0 12px">Independent Kalshi sports coverage, including games not listed on Polymarket. These are open-market YES ask quotes, not verified live games or guaranteed winning probabilities. Kalshi REST updates periodically; scanning is partial, not every Kalshi market.</div>
+<div class="filters" style="grid-template-columns:1fr 120px"><input id="kalshiSearch" placeholder="Find Kalshi teams or games…"><select id="kalshiFilter"><option value="all">All prices</option><option value="99">99%+</option><option value="alert">Reversals</option></select></div>
+<div id="kalshiMarkets" class="cards"><div class="empty">Waiting for independent Kalshi sports feed…</div></div>
+<div class="sectionhead"><h2>REAL-TIME MARKET PRICES</h2><span class="muted" id="rtStatus">Connecting to Render…</span></div><div class="notice" style="margin:0 0 12px">Direct Polymarket CLOB observations from Render, checked every 5 seconds while this page is open. A 97–99% price is a market quote, not a guaranteed win. These markets are not independently verified as live games; timestamps show quote freshness.</div><div id="rtMarkets" class="cards"><div class="empty">Waiting for real-time price feed…</div></div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
 <div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. Default view excludes markets past their listed end date or explicitly not accepting orders. Game labels are estimates from listed timestamps, NOT verified live scores. Verify actual game status and market availability before using any price.</div>
 <div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="eligible">Open / not past listed end (unverified)</option><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
@@ -273,6 +277,33 @@ async function loadRealtime(){
   $('rtMarkets').innerHTML='<div class="empty">Could not load Render price feed: '+esc(error.message)+'. Do not rely on this page for alerts until connected.</div>';
  }finally{rtBusy=false}
 }
+let kalshiRows=[],kalshiAlerts=[],kalshiState='Connecting…';
+function drawKalshi(){
+ const q=$('kalshiSearch').value.trim().toLowerCase(),filter=$('kalshiFilter').value;
+ const alerts=new Set(kalshiAlerts.map(x=>x.ticker));
+ let found=kalshiRows.filter(x=>(filter==='all'||filter==='99'&&Number(x.probability)>=.99||filter==='alert'&&alerts.has(x.ticker))&&[x.event,x.market,x.outcome,x.series].join(' ').toLowerCase().includes(q));
+ found.sort((a,b)=>(alerts.has(b.ticker)?1:0)-(alerts.has(a.ticker)?1:0)||Number(b.probability)-Number(a.probability));
+ $('kalshiMarkets').innerHTML=found.length?found.slice(0,60).map(x=>{
+  const alert=kalshiAlerts.find(a=>a.ticker===x.ticker),age=Math.max(0,Math.round(Date.now()/1000-Number(x.updated_at)));
+  return '<article class="card"><div class="event">'+esc(x.event||'Kalshi sports event')+'</div><div class="league">KALSHI · '+esc(x.series||'Sports')+'</div><div class="meta">'+esc(x.market||'')+' · YES: '+esc(x.outcome||'Yes')+'</div><div class="history"><span>YES ask · '+age+'s since scan</span><strong>'+pct(x.probability)+'</strong></div><div class="meta">Observed peak '+pct(x.peak)+' · '+(alert?'<span class="down">⚡ 99% REVERSAL · −'+Number(alert.drop_pp).toFixed(1)+' pp · REVIEW / NO AUTOMATIC BET</span>':'<span>Monitoring · game live status unverified</span>')+'</div></article>';
+ }).join(''):'<div class="empty">'+(kalshiState==='receiving'?'No Kalshi sports markets match your filter in the currently scanned subset.':'Kalshi data not ready. No prices or alerts are being claimed.')+'</div>';
+}
+async function loadKalshi(){
+ if(document.hidden)return;
+ try{
+  const response=await fetch(RT_API+'/kalshi?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(12000)});
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const data=await response.json();kalshiState=data.status;
+  kalshiRows=Array.isArray(data.markets)?data.markets:[];kalshiAlerts=Array.isArray(data.alerts)?data.alerts:[];
+  $('kalshiStatus').textContent=(data.status==='receiving'?'CONNECTED':'DELAYED')+' · '+Number(data.tracked_markets||0)+' markets · '+Number(data.current_99||0)+' at 99%+ · '+kalshiAlerts.length+' reversals';
+  if(data.error)$('kalshiStatus').textContent+=' · '+String(data.error).slice(0,70);
+  drawKalshi();
+ }catch(e){kalshiState='unavailable';$('kalshiStatus').textContent='KALSHI FEED UNAVAILABLE';$('kalshiMarkets').innerHTML='<div class="empty">Could not load Kalshi: '+esc(e.message)+'</div>'}
+}
+$('kalshiSearch').addEventListener('input',drawKalshi);
+$('kalshiFilter').addEventListener('input',drawKalshi);
+loadKalshi();
+setInterval(loadKalshi,20000);
 loadRealtime();
 setInterval(loadRealtime,5000);
 load();
