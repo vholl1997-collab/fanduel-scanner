@@ -7,10 +7,10 @@ import time
 import requests
 
 BASE = "https://external-api.kalshi.com/trade-api/v2"
-INTERVAL = 75
-MAX_PAGES = 25
+INTERVAL = 300
+MAX_PAGES = 3
 PAGE_SIZE = 200
-STALE = 240
+STALE = 900
 
 class KalshiFeed:
     def __init__(self):
@@ -24,9 +24,20 @@ class KalshiFeed:
         self.scanned = 0
         self.series = set()
         self.series_refreshed = 0
+        self.backoff_until = 0
+        self.backoff_seconds = 300
 
     def get(self, path, params=None):
         response = self.session.get(BASE + path, params=params, timeout=22)
+        if response.status_code == 429:
+            retry = response.headers.get("Retry-After", "")
+            try:
+                delay = max(300, min(3600, int(retry)))
+            except (ValueError, TypeError):
+                delay = self.backoff_seconds
+            self.backoff_until = time.time() + delay
+            self.backoff_seconds = min(self.backoff_seconds * 2, 3600)
+            raise RuntimeError("Kalshi rate limited (429); retrying after cooldown")
         response.raise_for_status()
         return response.json()
 
@@ -109,10 +120,14 @@ class KalshiFeed:
             self.last_success = now
             self.scanned = scanned
             self.error = ""
+            self.backoff_seconds = 300
             self.alerts = {k:v for k,v in self.alerts.items() if now-v["alert_at"] < 3600}
 
     def run(self):
         while True:
+            if time.time() < self.backoff_until:
+                time.sleep(min(60, max(1, self.backoff_until-time.time())))
+                continue
             try:
                 self.scan()
             except Exception as exc:
@@ -132,8 +147,9 @@ class KalshiFeed:
                 "status": "receiving" if fresh else "delayed",
                 "last_success": self.last_success,
                 "error": self.error,
+                "retry_after_seconds": max(0, round(self.backoff_until-now)),
                 "scanned_events": self.scanned,
-                "coverage": "Partial: first 25 pages of open events; not all Kalshi sports markets",
+                "coverage": "Partial: first 3 pages of open events; not all Kalshi sports markets",
                 "tracked_markets": len(rows),
                 "current_99": sum(x["probability"] >= .99 for x in rows),
                 "alerts": alerts[:60],
