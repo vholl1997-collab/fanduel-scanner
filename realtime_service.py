@@ -109,6 +109,7 @@ def discover():
                         "market_type": category,
                         "line": line,
                         "sport_game_id": str(event.get("gameId") or ""),
+                        "sport": str(event.get("seriesSlug") or event.get("sport") or ""),
                     }
                     if len(found) >= MAX_ASSETS:
                         return found
@@ -279,6 +280,23 @@ def high_probability():
             "result_tracking_status": "not_connected",
             "persistence": "memory_only_restart_resets",
             "note": "Prices are implied probabilities, not actual win probabilities. No value claim without matching sportsbook line and verified result.",
+        })
+
+
+@app.get("/live-prices")
+def live_prices():
+    """Fresh quotes for all monitored assets, including spreads and totals."""
+    now = time.time()
+    with lock:
+        fresh = [
+            {**markets[token], **price, "peak": peaks.get(token, price["probability"])}
+            for token, price in prices.items()
+            if token in markets and now - price["updated_at"] < STALE_SECONDS
+        ]
+        return jsonify({
+            "generated_at": now, "stale_after_seconds": STALE_SECONDS,
+            "tracked_assets": len(markets), "fresh_count": len(fresh),
+            "prices": fresh,
         })
 
 
