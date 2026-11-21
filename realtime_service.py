@@ -35,6 +35,13 @@ high_probability_observations = {}
 feed_stats = {"messages": 0, "last_message_at": None, "subscriptions_sent": 0, "last_close": None, "event_types": {}, "matched_price_updates": 0, "unmatched_assets": 0}
 session = requests.Session()
 
+@app.after_request
+def allow_public_dashboard(response):
+    response.headers['Access-Control-Allow-Origin'] = 'https://vholl1997-collab.github.io'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 
 def parse_list(value):
     if isinstance(value, list):
