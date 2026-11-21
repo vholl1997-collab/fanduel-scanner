@@ -37,7 +37,7 @@ header{padding-top:34px;position:relative}header:before{content:'';position:abso
 <div class="stat"><small>Crossed 99%</small><strong id="n99">—</strong></div>
 <div class="stat"><small>Saved observations</small><strong id="observations">0</strong></div>
 </div>
-<div class="sectionhead"><h2>LIVE NOW · SIGNAL RADAR</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Confirmed live real-sport games appear as the sports feed reports them. Reversal alerts are highlighted when a market previously reached 99%+ and drops 2+ points, or drops 10+ points since the prior snapshot. Prices are refreshed from saved snapshots automatically every minute; collection runs are best-effort, not streaming quotes.</div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
+<div class="sectionhead"><h2>LIVE NOW · SIGNAL RADAR</h2><span class="muted" id="liveCount">Connecting…</span></div><div class="notice" style="margin:0 0 12px">Confirmed live real-sport games appear as the sports feed reports them. Reversal alerts are highlighted when a market previously reached 99%+ and drops 2+ points, or drops 10+ points since the prior snapshot. Prices are refreshed from saved snapshots automatically every minute; collection runs are best-effort, not streaming quotes.</div><div class="sectionhead"><h2>REAL-TIME MARKET PRICES</h2><span class="muted" id="rtStatus">Connecting to Render…</span></div><div class="notice" style="margin:0 0 12px">Direct Polymarket CLOB observations from Render, checked every 5 seconds while this page is open. A 97–99% price is a market quote, not a guaranteed win. These markets are not independently verified as live games; timestamps show quote freshness.</div><div id="rtMarkets" class="cards"><div class="empty">Waiting for real-time price feed…</div></div><div id="liveGames" class="cards"><div class="empty">Waiting for live game updates…</div></div><div id="historical" style="display:none"><div class="sectionhead"><h2>99% reversal watchlist</h2><span class="muted" id="reversalCount">—</span></div>
 <div class="notice" style="margin:0 0 12px">Previously observed at 99%+, now at least 2 percentage points below the saved peak. Default view excludes markets past their listed end date or explicitly not accepting orders. Game labels are estimates from listed timestamps, NOT verified live scores. Verify actual game status and market availability before using any price.</div>
 <div class="filters" style="grid-template-columns:1fr 140px"><input id="reversalSearch" placeholder="Search reversals…"><select id="reversalSort"><option value="drop">Largest drop</option><option value="recent">Last observed</option><option value="peak">Highest peak</option></select></div><div class="filters" style="grid-template-columns:1fr"><select id="reversalStatus"><option value="eligible">Open / not past listed end (unverified)</option><option value="all">All historical reversals</option><option value="recent">Recently observed (within 15 min)</option><option value="older">Older / not recently observed</option></select></div>
 <div id="reversals" class="cards"><div class="empty">Loading reversal history…</div></div>
@@ -233,6 +233,34 @@ $('export').addEventListener('click',()=>{
  const csv=out.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n');
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='polymarket-market-snapshot.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 });
+const RT_API='https://fanduel-scanner-1.onrender.com';
+let rtBusy=false;
+async function loadRealtime(){
+ if(rtBusy||document.hidden)return;
+ rtBusy=true;
+ try{
+  const response=await fetch(RT_API+'/signals?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(8000)});
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const data=await response.json(),now=Date.now()/1000;
+  const active=(data.tracked_99_outcomes||[]).filter(x=>Number.isFinite(Number(x.probability))&&now-Number(x.updated_at)<90);
+  const alerts=(data.recent_alerts||[]).filter(x=>now-Number(x.updated_at)<300);
+  const selected=new Map();
+  for(const x of [...alerts,...active])selected.set(String(x.token_id||x.market_id||x.event+' '+x.outcome),x);
+  const entries=[...selected.values()].sort((a,b)=>Number(b.updated_at)-Number(a.updated_at)).slice(0,40);
+  const health=data.health||{};
+  $('rtStatus').textContent=(health.status==='receiving'?'CONNECTED':'DELAYED')+' · '+(health.tracked_assets||0)+' assets · '+active.length+' current 99% peaks · '+alerts.length+' recent alerts';
+  $('rtMarkets').innerHTML=entries.length?entries.map(x=>{
+   const age=Math.max(0,Math.round(now-Number(x.updated_at)));
+   const probability=Number(x.probability),peak=Number(x.peak),drop=Number(x.drop_pp);
+   return '<article class="card"><div class="event">'+esc(x.event||'Sports market')+'</div><div class="league">'+esc(x.market_type||'market')+(x.line!=null?' · line '+esc(x.line):'')+'</div><div class="meta">'+esc(x.market||'')+' · '+esc(x.outcome||'')+'</div><div class="history"><span>Observed quote</span><strong>'+pct(probability)+'</strong></div><div class="meta">Observed peak '+pct(peak)+' · Drop '+(Number.isFinite(drop)?drop.toFixed(1):'0.0')+' pp · '+age+'s ago · '+esc(x.source||'CLOB')+'</div></article>';
+  }).join(''):'<div class="empty">Connected to real-time server. No fresh observed 99% peaks or reversal alerts yet. This does not mean no other sports markets are trading.</div>';
+ }catch(error){
+  $('rtStatus').textContent='REAL-TIME FEED UNAVAILABLE';
+  $('rtMarkets').innerHTML='<div class="empty">Could not load Render price feed: '+esc(error.message)+'. Do not rely on this page for alerts until connected.</div>';
+ }finally{rtBusy=false}
+}
+loadRealtime();
+setInterval(loadRealtime,5000);
 load();
 refreshTimer=setInterval(()=>{if(!document.hidden)load()},60000);
 </script></body></html>
