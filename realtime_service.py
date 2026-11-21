@@ -21,6 +21,7 @@ CLOB_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 DISCOVERY_SECONDS = 120
 MAX_ASSETS = 1500
 STALE_SECONDS = 90
+SUBSCRIPTION_BATCH = 100
 app = Flask(__name__)
 lock = threading.RLock()
 markets = {}
@@ -31,6 +32,7 @@ last_discovery = 0
 last_error = ""
 events = deque(maxlen=200)
 high_probability_observations = {}
+feed_stats = {"messages": 0, "last_message_at": None, "subscriptions_sent": 0, "last_close": None}
 session = requests.Session()
 
 
@@ -153,6 +155,9 @@ def on_message(ws, raw):
         payload = json.loads(raw)
     except (TypeError, ValueError):
         return
+    with lock:
+        feed_stats["messages"] += 1
+        feed_stats["last_message_at"] = time.time()
     messages = payload if isinstance(payload, list) else [payload]
     for message in messages:
         if not isinstance(message, dict):
@@ -193,12 +198,26 @@ def monitor():
                 last_discovery = time.time()
                 last_error = ""
             def opened(ws):
-                ws.send(json.dumps({"assets_ids": list(found), "type": "market"}))
+                ids = list(found)
+                with lock:
+                    feed_stats["subscriptions_sent"] = 0
+                for start in range(0, len(ids), SUBSCRIPTION_BATCH):
+                    batch = ids[start:start + SUBSCRIPTION_BATCH]
+                    request = {"assets_ids": batch, "type": "market"} if start == 0 else {"assets_ids": batch, "operation": "subscribe"}
+                    ws.send(json.dumps(request))
+                    with lock:
+                        feed_stats["subscriptions_sent"] += len(batch)
+                    time.sleep(0.15)
+                logging.info("Subscribed %d CLOB assets in batches", len(ids))
             def failed(ws, error):
                 global last_error
                 last_error = str(error)[:250]
                 logging.warning("CLOB socket error: %s", error)
-            ws = WebSocketApp(CLOB_WS, on_open=opened, on_message=on_message, on_error=failed)
+            def closed(ws, code, reason):
+                with lock:
+                    feed_stats["last_close"] = {"code": code, "reason": str(reason)[:200], "at": time.time()}
+                logging.warning("CLOB socket closed: %s %s", code, reason)
+            ws = WebSocketApp(CLOB_WS, on_open=opened, on_message=on_message, on_error=failed, on_close=closed)
             # Periodically reconnect to refresh token subscriptions.
             timer = threading.Timer(DISCOVERY_SECONDS, ws.close)
             timer.daemon = True
@@ -222,7 +241,7 @@ def health():
         return jsonify({
             "service": "polymarket-pulse", "status": "receiving" if age is not None and age < STALE_SECONDS else "awaiting_live_prices",
             "tracked_assets": len(markets), "last_price_age_seconds": round(age, 1) if age is not None else None,
-            "last_discovery_at": last_discovery, "error": last_error,
+            "last_discovery_at": last_discovery, "error": last_error, "feed": dict(feed_stats),
         })
 
 
