@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import requests
 from flask import Flask, jsonify
 from websocket import WebSocketApp
+from kalshi_feed import feed as kalshi_feed
 
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -265,6 +266,11 @@ def monitor():
         delay = min(delay * 2, 30)
 
 
+@app.get("/kalshi")
+def kalshi():
+    return jsonify(kalshi_feed.snapshot())
+
+
 @app.get("/health")
 def health():
     with lock:
@@ -330,4 +336,5 @@ def signals():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     threading.Thread(target=monitor, daemon=True).start()
+    threading.Thread(target=kalshi_feed.run, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")), threaded=True)
