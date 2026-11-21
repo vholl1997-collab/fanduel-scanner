@@ -75,11 +75,13 @@ function matchupLogos(text,sport){
  return '<div class="teamline">'+teamLogo(parts[0],sport)+'<span class="versus">VS</span>'+teamLogo(parts[1],sport)+'</div>';
 }
 
+let realtimePrices=[];
+const TEAM_ALIASES={"NOP":"new orleans pelicans","OKC":"oklahoma city thunder","TOR":"toronto raptors","DET":"detroit pistons","ORL":"orlando magic","BKN":"brooklyn nets","UNM":"new mexico","WYO":"wyoming","UTEP":"utep","AFA":"air force","LAL":"los angeles lakers","BOS":"boston celtics","NYK":"new york knicks","GSW":"golden state warriors","PHX":"phoenix suns","DAL":"dallas mavericks","DEN":"denver nuggets","MIA":"miami heat","CHI":"chicago bulls","CLE":"cleveland cavaliers","MIL":"milwaukee bucks"};
 function matchLiveMarkets(g){
  const norm=x=>String(x||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
  const id=String(g.gameId||''),slug=norm(g.slug),home=norm(g.homeTeam),away=norm(g.awayTeam);
- const matches=rows.filter(h=>{
-  if(!allowedMarket(h)||!eligible(h)||Number(h.last_seen)<Date.now()/1000-900)return false;
+ const matches=[...realtimePrices,...rows].filter(h=>{
+  if(h.updated_at){if(Date.now()/1000-Number(h.updated_at)>90)return false;}else if(!allowedMarket(h)||!eligible(h)||Number(h.last_seen)<Date.now()/1000-900)return false;
   if(id&&h.sports_game_id&&id===String(h.sports_game_id))return true;
   if(slug&&((h.event_slug&&slug===norm(h.event_slug))||(h.market_slug&&slug===norm(h.market_slug))))return true;
   if(!home||!away||home.length<4||away.length<4)return false;
@@ -87,7 +89,7 @@ function matchLiveMarkets(g){
   // Require two identifiable opponents in the event title; don't match by one shared word.
   const sides=event.split(/\s+(?:vs|versus|v)\s+|\s+at\s+/);
   if(sides.length!==2)return false;
-  const same=(a,b)=>a===b||(a.length>=6&&b.length>=6&&(a.startsWith(b+' ')||b.startsWith(a+' ')));
+  const same=(a,b)=>{const expand=x=>norm(TEAM_ALIASES[x.toUpperCase()]||x).replace(/\b(fc|cf|afc)\b/g,'').trim();a=expand(a);b=expand(b);return a===b||(a.length>=6&&b.length>=6&&(a.startsWith(b+' ')||b.startsWith(a+' ')));};
   return (same(home,sides[0])&&same(away,sides[1]))||(same(home,sides[1])&&same(away,sides[0]));
  });
  return matches;
@@ -132,7 +134,7 @@ function drawLive(){
   const market=matched.find(h=>Number.isFinite(Number(h.probability)));
   const teams=(g.awayTeam||'Away')+' vs '+(g.homeTeam||'Home');
   const signal=gameAlerts.length?'<span class="down">⚡ '+gameAlerts.length+' REVERSAL ALERT'+(gameAlerts.length===1?'':'S')+'</span>':'<span class="up">LIVE · MONITORING</span>';
-  const price=market?'<div class="history"><span>'+esc(market.title||'Market')+' · '+esc(market.outcome||'')+'</span><strong>'+pct(market.probability)+'</strong></div><div class="meta">Last market snapshot '+date(market.last_seen)+'</div>':'<div class="meta">Live game received · No verified matching Polymarket price yet</div>';
+  const price=market?matched.filter(h=>Number.isFinite(Number(h.probability))).slice(0,8).map(h=>'<div class="history"><span>'+esc(h.market||h.title||'Market')+' · '+esc(h.outcome||'')+(h.line!=null?' · '+esc(h.line):'')+'</span><strong>'+pct(h.probability)+'</strong></div>').join('')+'<div class="meta">Price source: '+(market.updated_at?'live CLOB quote · '+Math.round(Date.now()/1000-market.updated_at)+'s old':'saved snapshot · '+date(market.last_seen))+'</div>':'<div class="meta">Live game received · No verified matching Polymarket price yet</div>';
   const details=gameAlerts.map(a=>'<div class="meta"><span class="down">'+(a.reversal?'99% REVERSAL':'MAJOR DROP')+' · '+esc(a.h.outcome||'')+' · '+pct(a.h.probability)+'</span><span>Peak '+pct(a.h.peak)+'</span><span>Drop −'+a.peakDrop.toFixed(1)+' pp</span></div>').join('');
   return '<article class="card">'+matchupLogos(teams,g.sport||g.league||g.leagueAbbreviation)+'<div class="event">'+esc(teams)+'</div><div class="league">'+esc(g.leagueAbbreviation||g.sport||'Sports')+' · '+esc(g.period||g.status||'Live')+'</div><div class="meta">'+signal+'</div>'+price+details+'</article>';
  }).join(''):'<div class="empty">'+(liveConnected?(liveLastMessage?'No confirmed live games found in sports updates or latest market snapshot.':'Connected to sports feed; waiting for live game updates.'):'Live feed disconnected; reconnecting. ('+esc(liveError||'No connection')+')')+'</div>';
@@ -242,6 +244,7 @@ async function loadRealtime(){
   const response=await fetch(RT_API+'/signals?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(8000)});
   if(!response.ok)throw Error('HTTP '+response.status);
   const data=await response.json(),now=Date.now()/1000;
+  try{const lr=await fetch(RT_API+'/live-prices?t='+Date.now(),{cache:'no-store',signal:AbortSignal.timeout(8000)});if(lr.ok){const ld=await lr.json();realtimePrices=Array.isArray(ld.prices)?ld.prices:[];}else realtimePrices=[];}catch(_){realtimePrices=[];}drawLive();
   const active=(data.tracked_99_outcomes||[]).filter(x=>Number.isFinite(Number(x.probability))&&now-Number(x.updated_at)<90);
   const alerts=(data.recent_alerts||[]).filter(x=>now-Number(x.updated_at)<300);
   const selected=new Map();
