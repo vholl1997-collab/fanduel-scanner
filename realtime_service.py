@@ -77,8 +77,9 @@ def classify_market(market, outcome):
 def discover():
     """Fetch active sports markets; skip esports and virtual events."""
     from collector import is_sports
-    found = {}
-    for offset in range(0, 1200, 100):
+    candidates = []
+    now = time.time()
+    for offset in range(0, 5000, 100):
         response = session.get(GAMMA + "/events", params={
             "active": "true", "closed": "false", "limit": 100,
             "offset": offset, "order": "id", "ascending": "false",
@@ -99,7 +100,7 @@ def discover():
                     if not token:
                         continue
                     category, line = classify_market(market, outcomes[index] if index < len(outcomes) else "")
-                    found[str(token)] = {
+                    item = {
                         "token_id": str(token),
                         "event": event.get("title", ""),
                         "event_slug": event.get("slug", ""),
@@ -110,12 +111,21 @@ def discover():
                         "line": line,
                         "sport_game_id": str(event.get("gameId") or ""),
                         "sport": str(event.get("seriesSlug") or event.get("sport") or ""),
+                        "event_live": event.get("live") is True,
+                        "event_start": str(event.get("startDate") or event.get("startTime") or ""),
                     }
-                    if len(found) >= MAX_ASSETS:
-                        return found
+                    start = item["event_start"]
+                    try:
+                        start_ts = datetime.fromisoformat(start.replace("Z", "+00:00")).timestamp()
+                    except (ValueError, TypeError):
+                        start_ts = 0
+                    # Live-marked and recently started games take precedence over distant futures.
+                    priority = (3 if item["event_live"] else 2 if start_ts and -3600 <= now - start_ts <= 28800 else 1 if start_ts and 0 <= start_ts - now <= 86400 else 0)
+                    candidates.append((priority, start_ts, item))
         if len(batch) < 100:
             break
-    return found
+    candidates.sort(key=lambda row: (row[0], row[1] if row[0] >= 2 else -row[1]), reverse=True)
+    return {item["token_id"]: item for _, _, item in candidates[:MAX_ASSETS]}
 
 
 def observe(token, probability, source):
@@ -261,7 +271,8 @@ def health():
         age = time.time() - last_tick if last_tick else None
         return jsonify({
             "service": "polymarket-pulse", "status": "receiving" if age is not None and age < STALE_SECONDS else "awaiting_live_prices",
-            "tracked_assets": len(markets), "last_price_age_seconds": round(age, 1) if age is not None else None,
+            "tracked_assets": len(markets), "tracked_live_marked": sum(bool(m.get("event_live")) for m in markets.values()),
+            "tracked_event_samples": list(dict.fromkeys(m["event"] for m in list(markets.values())[:40]))[:12], "last_price_age_seconds": round(age, 1) if age is not None else None,
             "last_discovery_at": last_discovery, "error": last_error, "feed": dict(feed_stats),
         })
 
