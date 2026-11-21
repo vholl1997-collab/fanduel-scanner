@@ -32,7 +32,7 @@ last_discovery = 0
 last_error = ""
 events = deque(maxlen=200)
 high_probability_observations = {}
-feed_stats = {"messages": 0, "last_message_at": None, "subscriptions_sent": 0, "last_close": None}
+feed_stats = {"messages": 0, "last_message_at": None, "subscriptions_sent": 0, "last_close": None, "event_types": {}, "matched_price_updates": 0, "unmatched_assets": 0}
 session = requests.Session()
 
 
@@ -121,7 +121,9 @@ def observe(token, probability, source):
     now = time.time()
     with lock:
         if token not in markets:
+            feed_stats["unmatched_assets"] += 1
             return
+        feed_stats["matched_price_updates"] += 1
         previous = prices.get(token, {}).get("probability")
         peak = max(peaks.get(token, probability), probability)
         peaks[token] = peak
@@ -162,7 +164,10 @@ def on_message(ws, raw):
     for message in messages:
         if not isinstance(message, dict):
             continue
-        kind = message.get("event_type")
+        kind = message.get("event_type") or "unknown"
+        with lock:
+            types = feed_stats["event_types"]
+            types[kind] = types.get(kind, 0) + 1
         if kind == "price_change":
             for change in message.get("price_changes") or []:
                 token = str(change.get("asset_id") or "")
@@ -172,6 +177,14 @@ def on_message(ws, raw):
                     observe(token, value, "clob_last_trade")
         elif kind == "last_trade_price":
             observe(str(message.get("asset_id") or ""), message.get("price"), "clob_last_trade")
+        elif kind == "best_bid_ask":
+            try:
+                bid = float(message["best_bid"])
+                ask = float(message["best_ask"])
+                if 0 <= bid <= ask <= 1:
+                    observe(str(message.get("asset_id") or ""), (bid + ask) / 2, "clob_best_bid_ask")
+            except (ValueError, TypeError, KeyError):
+                pass
         elif kind == "book":
             token = str(message.get("asset_id") or "")
             bids = message.get("bids") or message.get("buys") or []
