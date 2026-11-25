@@ -1,0 +1,21 @@
+name: Test Crawlora FanDuel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test FanDuel API
+        env:
+          CRAWLORA_API_KEY: ${{ secrets.CRAWLORA_API_KEY }}
+        run: |
+          curl --fail --silent --show-error \
+            'https://api.crawlora.net/api/v1/fanduel/sportsbook/live?event_type_id=6423&state=az' \
+            -H "x-api-key: $CRAWLORA_API_KEY" \
+            -o response.json
+          python -c 'import json; d=json.load(open("response.json")); assert d["code"] == 200; print("API test successful"); print("Events:", len(d["data"]["events"]))'
