@@ -56,3 +56,28 @@ This project is an information and analytics tool. It must not place wagers auto
 - Run the collector tests with `python -m unittest discover -s tests -v`. They also execute in the collector workflow.
 - For a manual smoke test, open the workflow, choose **Run workflow** on `main`, wait for a green check, then inspect the latest commit on the `data` branch and the dashboard's freshness label. Confirm a **schedule**-triggered run appears later before calling unattended monitoring verified.
 - GitHub repository history is not a scalable long-term database. For production reliability, migrate to a hosted scheduler and database with monitoring, retention, and backups.
+
+## FanDuel Arizona table tennis
+
+The existing Render process serves the scanner at `/fanduel/table-tennis`.
+Set `CRAWLORA_API_KEY` in the existing Render service environment. GitHub
+Actions secrets are separate from Render environment variables. The route
+reports `missing_api_key` when the Render variable is absent.
+
+Polling runs from 7:00 to 7:25 p.m. Arizona time each day by default. Set
+`FANDUEL_SCAN_START_AZ` to a local 24-hour time on a five-minute boundary to
+move the window. Inside the window the scanner discovers live matches every
+five minutes and refreshes known active matches every 30 seconds. It skips
+score calls when discovery finds no live matches. Each score call covers up to
+100 matches. Larger lists rotate across successive ticks.
+
+Five two-credit discoveries and at most 50 one-credit score calls cost at most
+60 scheduled credits per day, or 1,860 over 31 days for one scanner process.
+On the Crawlora Free plan the provider enforces the shared 2,000-credit limit.
+Keep one service replica, and account for other uses of the same allowance.
+The scanner backs off on quota and rate-limit responses. Keep the existing plan
+and overage settings in mind if the key's plan changes.
+
+The scanner uses ordered, completed set scores to detect an eventual 2–2 tie
+after either player fell behind 0–2. The API returns fresh scores and recent
+detections. Recent detections are held in memory and clear on restart.
